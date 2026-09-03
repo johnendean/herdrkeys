@@ -1,0 +1,22 @@
+[project]
+name = "herdrkeys"
+version = "0.1.0"
+description = "Bind a Pimoroni Keybow 2040 to a running Herdr session"
+requires-python = ">=3.11"
+dependencies = ["pyserial>=3.5"]
+
+[project.scripts]
+herdrkeys = "herdrkeys.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

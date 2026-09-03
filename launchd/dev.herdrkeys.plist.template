@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.herdrkeys</string>
+
+  <!-- The venv interpreter by absolute path, not `python3`: pinning it here is
+       what stops a Homebrew Python upgrade silently breaking the agent. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/python</string>
+    <string>-m</string>
+    <string>herdrkeys</string>
+    <string>run</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- A crash net only. The daemon reconnects to Herdr and to the keypad on its
+       own and never exits voluntarily, so launchd should rarely have to act. -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/.venv/herdrkeys.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/.venv/herdrkeys.log</string>
+</dict>
+</plist>
