@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from herdrkeys import daemon as daemon_module
@@ -137,52 +140,45 @@ def test_backoff_is_capped():
 
 
 def test_the_backlog_is_re_reconciled_once_the_stream_goes_quiet(rig, monkeypatch):
-    # Replayed backlog can carry the same revision as the snapshot taken next to
-    # it, so history folded afterwards silently wins -- and the replay is rate
-    # limited, ~94 events over four seconds on a real session, so a fixed delay
-    # would race it. Observed live: two agents that were idle and working both
-    # rendered a state they had been in minutes earlier.
+    # The replay is rate limited -- ~94 events over four seconds on a real
+    # session, growing with session age -- so a fixed delay would race it. The
+    # second snapshot is what picks up anything that changed while it drained.
     instance, _device, _focused, _ = rig
+    instance.config.reconcile_seconds = 30.0
     snapshots = []
 
     class Stream:
         def __init__(self, path, **kwargs):
-            self.batches = [
-                [{"data": {"type": "pane_updated", "pane": agent_pane("w1:p1", "working", revision=36)}}],
-                [],
-                [],
-            ]
+            pass
 
         def fileno(self):
             return 0
 
         def read_events(self):
-            return self.batches.pop(0) if self.batches else []
+            return []
 
         def close(self):
             pass
 
     def snapshot(path):
         snapshots.append(True)
-        return {"panes": [agent_pane("w1:p1", "idle", revision=36)], "focused_pane_id": None}
+        status = "idle" if len(snapshots) == 1 else "blocked"
+        return {"panes": [agent_pane("w1:p1", status, revision=36)], "focused_pane_id": None}
 
     monkeypatch.setattr(daemon_module.herdr, "EventStream", Stream)
     monkeypatch.setattr(daemon_module.herdr, "snapshot", snapshot)
 
     instance._connect_herdr(100.0)
     assert len(snapshots) == 1 and instance._backlog_settling
-
-    instance._pump_herdr(100.1)  # replayed history overwrites the truth
-    assert instance.state.panes["w1:p1"].state is AgentState.WORKING
-    assert instance._backlog_settling, "still arriving; do not reconcile yet"
+    assert instance.state.panes["w1:p1"].state is AgentState.IDLE
 
     instance._pump_herdr(100.5)  # quiet, but not long enough
-    assert instance._backlog_settling
+    assert instance._backlog_settling and len(snapshots) == 1
 
     instance._pump_herdr(101.0)  # quiet for longer than BACKLOG_QUIET_SECONDS
     assert not instance._backlog_settling
     assert len(snapshots) == 2
-    assert instance.state.panes["w1:p1"].state is AgentState.IDLE, "truth wins in the end"
+    assert instance.state.panes["w1:p1"].state is AgentState.BLOCKED, "picks up what changed"
 
 
 def test_losing_herdr_clears_the_backlog_wait(rig, monkeypatch):
@@ -204,3 +200,91 @@ def test_same_revision_updates_are_not_discarded():
                           "focused_pane_id": None})
     state.apply_event({"data": {"type": "pane_updated", "pane": agent_pane("w1:p1", "idle", revision=36)}})
     assert state.panes["w1:p1"].state is AgentState.IDLE
+
+
+def test_an_unchanged_frame_is_resent_as_a_heartbeat(rig):
+    # Frames are only pushed on change, so a steady session can go minutes
+    # without one -- and the board reads silence as the daemon having died.
+    instance, device, _focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle")], "w1:p1")
+
+    instance._push(instance.render(10.0), 10.0)
+    assert len(device.frames) == 1
+
+    instance._push(instance.render(11.0), 11.0)
+    assert len(device.frames) == 1, "unchanged and not yet due"
+
+    instance._push(instance.render(12.5), 12.5)
+    assert len(device.frames) == 2, "unchanged but due"
+    assert device.frames[-1] == device.frames[0]
+
+
+def test_the_heartbeat_keeps_the_loop_awake(rig):
+    instance, _device, _focused, _ = rig
+    instance._last_push_at = 100.0
+    assert instance._timeout(100.0) <= daemon_module.HEARTBEAT_SECONDS
+
+
+def test_heartbeat_is_faster_than_the_boards_staleness_timeout():
+    # The board discards a frame nobody has refreshed; if these two ever cross,
+    # a healthy session would flicker to "no host".
+    device_source = (Path(__file__).parent.parent / "device" / "code.py").read_text()
+    match = re.search(r"^HOST_TIMEOUT = ([\d.]+)", device_source, re.M)
+    assert match, "device/code.py must declare HOST_TIMEOUT"
+    assert daemon_module.HEARTBEAT_SECONDS < float(match.group(1)) / 2
+
+
+def test_history_is_discarded_rather_than_applied(rig, monkeypatch):
+    # Replaying the backlog would walk the session's past across the keys: focus
+    # strobing between agents every ~50ms, agents appearing and vanishing.
+    # Observed live before this gate existed. The connect-time snapshot is
+    # already truth, so the grid can light up at once and simply ignore history.
+    instance, device, _focused, _ = rig
+    history = [{"data": {"type": "pane_focused", "pane_id": "w2:p1", "workspace_id": "w2"}}]
+
+    class Stream:
+        def __init__(self, path, **kwargs):
+            pass
+
+        def fileno(self):
+            return 0
+
+        def read_events(self):
+            return [history.pop(0)] if history else []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(daemon_module.herdr, "EventStream", Stream)
+    monkeypatch.setattr(
+        daemon_module.herdr,
+        "snapshot",
+        lambda path: {"panes": [agent_pane("w1:p1", "idle", focused=True)], "focused_pane_id": "w1:p1"},
+    )
+
+    instance._connect_herdr(0.0)
+    assert instance._backlog_settling
+    instance._push(instance.render(0.1), 0.1)
+    assert len(device.frames) == 1, "the connect snapshot is truth; show it at once"
+
+    instance._pump_herdr(0.2)  # a replayed focus change arrives
+    assert instance.state.focused_pane_id == "w1:p1", "history must not move focus"
+
+    instance._pump_herdr(1.5)  # quiet: reconcile and start trusting the stream
+    assert not instance._backlog_settling
+    instance.state.apply_event(
+        {"data": {"type": "pane_focused", "pane_id": "w9:p9", "workspace_id": "w9"}}
+    )
+    assert instance.state.focused_pane_id == "w9:p9", "live events are applied normally"
+
+
+def test_a_busy_session_still_lights_up_eventually(rig, monkeypatch):
+    # If events never stop arriving, waiting for quiet would wait forever.
+    instance, _device, _focused, _ = rig
+    monkeypatch.setattr(daemon_module.herdr, "snapshot", lambda path: {"panes": [], "focused_pane_id": None})
+    instance._backlog_settling = True
+    instance._last_event_at = 100.0
+    instance._backlog_deadline = 100.0 + daemon_module.BACKLOG_MAX_SECONDS
+
+    assert not instance._backlog_done(100.5), "still arriving, deadline not reached"
+    assert instance._backlog_done(100.0 + daemon_module.BACKLOG_MAX_SECONDS)

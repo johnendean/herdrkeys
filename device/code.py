@@ -51,6 +51,11 @@ BLINK_HZ = 1.4
 PULSE_SECONDS = 2.0
 FLASH_SECONDS = 0.35
 
+# If the host stops sending, the last frame is a lie: it would keep showing agent
+# states with no daemon running. Longer than the daemon's HEARTBEAT_SECONDS so a
+# quiet session is never mistaken for a dead one.
+HOST_TIMEOUT = 6.0
+
 # Physical key numbering: key 0 is bottom-left and numbering runs up each
 # column. To turn the board, replace this with the permutation you want; the
 # host is unaware of orientation and always talks in slot numbers.
@@ -63,6 +68,7 @@ keybow.led_sleep_enabled = False  # a status display must never time out
 data = usb_cdc.data
 
 frame = None            # last frame received, or None before the first one
+frame_at = 0.0          # when it arrived, so a stale one can be discarded
 last_rgb = [None] * 16
 pressed_before = [False] * 16
 flash_until = 0.0
@@ -111,8 +117,9 @@ def colour_for(code, now):
 
 
 def paint(now):
+    stale = frame is None or (now - frame_at) > HOST_TIMEOUT
     for slot in range(16):
-        if frame is None:
+        if stale:
             rgb = NO_HOST if slot == 15 else OFF
         else:
             rgb = colour_for(frame[slot], now)
@@ -123,7 +130,7 @@ def paint(now):
 
 
 def handle(message):
-    global frame, flash_until
+    global frame, frame_at, flash_until
     if not isinstance(message, dict):
         return
     kind = message.get("t")
@@ -133,6 +140,7 @@ def handle(message):
         keys_string = message.get("k")
         if isinstance(keys_string, str) and len(keys_string) == 16:
             frame = keys_string
+            frame_at = time.monotonic()
     elif kind == "flash":
         flash_until = time.monotonic() + FLASH_SECONDS
 

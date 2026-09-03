@@ -27,6 +27,12 @@ log = logging.getLogger("herdrkeys")
 
 IDLE_TIMEOUT = 1.0
 
+# Frames are only pushed when they change, so a steady session can go minutes
+# without one. The board treats silence as the daemon having died, so resend the
+# current frame periodically to prove otherwise. Must be comfortably shorter
+# than HOST_TIMEOUT in device/code.py.
+HEARTBEAT_SECONDS = 2.0
+
 # Herdr replays a backlog on subscribe, and a replayed event can carry the same
 # per-pane revision as the snapshot taken alongside it -- Herdr does not bump
 # `revision` for every status change. The revision guard drops strictly-older
@@ -38,6 +44,10 @@ IDLE_TIMEOUT = 1.0
 # session has been alive. So the corrective reconcile waits for the stream to go
 # quiet rather than for a fixed delay, which would race a longer backlog.
 BACKLOG_QUIET_SECONDS = 0.75
+
+# ...but a busy session might never fall quiet, and the grid has to light up
+# eventually. Reconcile regardless once this long has passed since connecting.
+BACKLOG_MAX_SECONDS = 10.0
 
 
 class Backoff:
@@ -74,12 +84,14 @@ class Daemon:
         self.stream: herdr.EventStream | None = None
         self.device: Device | None = None
         self.last_frame: Frame | None = None
+        self._last_push_at = 0.0
 
         self._herdr_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
         self._device_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
         self._next_reconcile = 0.0
         self._backlog_settling = False
         self._last_event_at = 0.0
+        self._backlog_deadline = 0.0
         self._host_app: str | None = config.terminal_app
 
     # -- connections -----------------------------------------------------
@@ -90,6 +102,7 @@ class Daemon:
             self._reconcile(now)
             self._backlog_settling = True
             self._last_event_at = now
+            self._backlog_deadline = now + BACKLOG_MAX_SECONDS
             self._herdr_backoff.succeeded()
             log.info("connected to herdr at %s", self.socket_path)
         except (OSError, herdr.HerdrError) as exc:
@@ -158,10 +171,22 @@ class Daemon:
             return
         if events:
             self._last_event_at = now
+        if self._backlog_settling:
+            # Herdr is replaying history. Applying it animates the session's past
+            # across the keys -- focus strobing between agents, agents appearing
+            # and vanishing -- so drop it. The snapshot taken at connect is
+            # already truth, and another one follows once the replay stops, so
+            # nothing is lost by ignoring the stream until then.
+            events = []
         for event in events:
             self.state.apply_event(event)
-        if self._backlog_settling and now - self._last_event_at >= BACKLOG_QUIET_SECONDS:
+        if self._backlog_done(now):
             self._settle_backlog(now)
+
+    def _backlog_done(self, now: float) -> bool:
+        if not self._backlog_settling:
+            return False
+        return now - self._last_event_at >= BACKLOG_QUIET_SECONDS or now >= self._backlog_deadline
 
     def _settle_backlog(self, now: float) -> None:
         """Re-apply truth once the replayed history has stopped arriving."""
@@ -225,7 +250,10 @@ class Daemon:
         return reducer.render(agent_panes, self.slots, self.settler, connected=self.stream is not None)
 
     def _push(self, frame: Frame, now: float) -> None:
-        if self.device is None or frame == self.last_frame:
+        if self.device is None:
+            return
+        due = now - self._last_push_at >= HEARTBEAT_SECONDS
+        if frame == self.last_frame and not due:
             return
         try:
             self.device.send_frame(frame)
@@ -233,11 +261,14 @@ class Daemon:
             self._drop_device(now, str(exc))
             return
         self.last_frame = frame
+        self._last_push_at = now
 
     # -- loop ------------------------------------------------------------
 
     def _timeout(self, now: float) -> float:
         candidates = [IDLE_TIMEOUT]
+        if self.device is not None:
+            candidates.append(max(0.0, self._last_push_at + HEARTBEAT_SECONDS - now))
         settle = self.settler.next_deadline(now)
         if settle is not None:
             candidates.append(settle)
@@ -247,6 +278,7 @@ class Daemon:
             candidates.append(max(0.0, self._next_reconcile - now))
             if self._backlog_settling:
                 candidates.append(max(0.0, self._last_event_at + BACKLOG_QUIET_SECONDS - now))
+                candidates.append(max(0.0, self._backlog_deadline - now))
         if self.device is None:
             candidates.append(self._device_backoff.wait_for(now))
         return max(0.01, min(candidates))
@@ -280,7 +312,7 @@ class Daemon:
             woken = {key.data for key, _ in ready}
             if "herdr" in woken:
                 self._pump_herdr(now)
-            elif self._backlog_settling and now - self._last_event_at >= BACKLOG_QUIET_SECONDS:
+            elif self._backlog_done(now):
                 self._settle_backlog(now)
             if "device" in woken:
                 self._pump_device(now)

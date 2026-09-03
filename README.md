@@ -118,6 +118,9 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 - The previous firmware on the board (a 4-layer HID keyboard: numpad, media
   keys, mixxx) is saved in [`salvage/`](salvage/). HID is left enabled in
   `boot.py`, so restoring those layers later needs no power cycle.
-- Herdr's event backlog is bounded and its replay is not a complete history,
-  which is why the daemon reconciles against `session.snapshot` on a timer. See
-  ADR 0002.
+- Herdr's event backlog is bounded, rate-limited, and not a complete history,
+  which is why the daemon reconciles against `session.snapshot` rather than
+  trusting the stream, and ignores replayed events entirely. See ADR 0002.
+- The daemon resends the current frame every two seconds even when nothing has
+  changed. The board discards a frame older than six seconds and falls back to
+  showing no host, so a dead daemon cannot leave stale agent states lit.

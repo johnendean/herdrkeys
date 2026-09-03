@@ -70,3 +70,11 @@ Together those mean the corrective reconcile after connecting must wait for the
 event stream to fall quiet, not for a fixed delay. A fixed delay fires mid-replay
 on any session older than the delay, and the grid then shows states the agents
 were in minutes ago until the next periodic reconcile.
+
+Replayed events are discarded rather than folded. Applying them animates the
+session's history across the keys -- focus was observed strobing between two
+agents every ~50ms, and agents appearing and vanishing -- and nothing is lost by
+ignoring them, because the snapshot taken at connect is already truth and another
+follows once the replay stops. The grid therefore lights up correctly within a
+second of starting rather than after the replay drains, which took nearly eight
+seconds on a day-old session.
