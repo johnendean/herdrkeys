@@ -57,8 +57,12 @@ config file      ~/.config/herdrkeys/config.toml  (absent, using defaults)
 slot map         ~/.local/state/herdrkeys/slots.json
 herdr socket     ~/.config/herdr/herdr.sock  ok  (4 panes, 2 agent panes)
 keybow           /dev/cu.usbmodem11403  (console /dev/cu.usbmodem11401)  ok
+daemon           running, pid 35689
 terminal app     /Applications/iTerm.app
 ```
+
+Only one process can hold the keypad's serial port, so when the daemon is
+already running `doctor` reports the port as in use rather than probing it.
 
 ## Developing without hardware
 

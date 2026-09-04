@@ -6,9 +6,12 @@ import argparse
 import logging
 import sys
 
+import os
+import subprocess
+
 from . import activate, discovery, herdr
 from .config import CONFIG_PATH, Config
-from .daemon import Daemon
+from .daemon import PROCESS_MARKER, Daemon
 from .device import SerialDevice
 from .model import PROTOCOL_VERSION
 
@@ -20,10 +23,36 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def running_daemon_pid() -> int | None:
+    """The PID of an already-running daemon, if there is one.
+
+    Only one process can usefully hold the keypad's serial port, so knowing this
+    is what stops `doctor` reporting a healthy setup as a firmware failure.
+    """
+    try:
+        raw = subprocess.run(["ps", "-Ao", "pid=,command="], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    ours = os.getpid()
+    for line in raw.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2 or not parts[1].endswith(PROCESS_MARKER):
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if pid != ours:
+            return pid
+    return None
+
+
 def doctor(config: Config) -> int:
     """Report on everything the daemon depends on, without changing anything."""
     ok = True
     socket_path = config.socket_path or herdr.default_socket_path()
+    daemon_pid = running_daemon_pid()
 
     print(f"config file      {CONFIG_PATH}{'' if CONFIG_PATH.exists() else '  (absent, using defaults)'}")
     print(f"slot map         {config.state_path}{'' if config.state_path.exists() else '  (absent, will be created)'}")
@@ -48,13 +77,20 @@ def doctor(config: Config) -> int:
     else:
         port = config.serial_port or ports[-1].device
         print(f"keybow           {port}  (console {ports[0].device})", end="  ")
-        try:
-            device = SerialDevice(port)
-            print(f"ok  (firmware {device.firmware}, protocol {PROTOCOL_VERSION})")
-            device.close()
-        except Exception as exc:
-            ok = False
-            print(f"NO HANDSHAKE  ({exc})")
+        if daemon_pid is not None:
+            # Probing now would take the port from under the daemon, or get no
+            # reply because the daemon read it. Neither proves anything.
+            print(f"in use by the running daemon (pid {daemon_pid})")
+        else:
+            try:
+                device = SerialDevice(port)
+                print(f"ok  (firmware {device.firmware}, protocol {PROTOCOL_VERSION})")
+                device.close()
+            except Exception as exc:
+                ok = False
+                print(f"NO HANDSHAKE  ({exc})")
+
+    print(f"daemon           {'running, pid ' + str(daemon_pid) if daemon_pid else 'not running  (make install-agent, or make run)'}")
 
     app = config.terminal_app or activate.detect_host_app()
     if config.activate_terminal:

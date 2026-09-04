@@ -25,6 +25,10 @@ from .slots import SlotMap
 
 log = logging.getLogger("herdrkeys")
 
+# How a running daemon is recognised from outside, so `doctor` can tell "the
+# firmware is broken" apart from "the daemon already has the port".
+PROCESS_MARKER = "herdrkeys run"
+
 IDLE_TIMEOUT = 1.0
 
 # Frames are only pushed when they change, so a steady session can go minutes
