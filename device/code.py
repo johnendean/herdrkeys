@@ -68,7 +68,7 @@ HOST_TIMEOUT = 6.0
 #
 # PMK numbers the physical keys with number_to_xy (x = n % 4, y = n // 4), key 0
 # bottom-left, so at ROTATION = 0 slot 15 is the top-right key.
-ROTATION = 180
+ROTATION = 90
 
 
 def _key_order(degrees):
