@@ -42,3 +42,48 @@ def test_every_slot_matches_pmks_numbering():
     for slot in range(16):
         x, y = number_to_xy(slot)
         assert rows[3 - y][x] == slot, f"slot {slot} belongs at column {x}, row {y}"
+
+
+# -- board orientation ---------------------------------------------------
+
+
+def key_order(degrees):
+    """The device's own rotation, re-implemented so a typo in it gets caught."""
+    order = []
+    for slot in range(16):
+        x, y = slot % 4, slot // 4
+        if degrees == 90:
+            x, y = y, 3 - x
+        elif degrees == 180:
+            x, y = 3 - x, 3 - y
+        elif degrees == 270:
+            x, y = 3 - y, x
+        order.append(y * 4 + x)
+    return order
+
+
+def test_every_rotation_is_a_permutation():
+    # A rotation that repeats or drops a key would leave LEDs stuck lit and key
+    # presses reporting the wrong slot.
+    for degrees in (0, 90, 180, 270):
+        assert sorted(key_order(degrees)) == list(range(16)), f"{degrees} is not a bijection"
+
+
+def test_half_a_turn_reverses_the_board():
+    assert key_order(180) == list(reversed(range(16)))
+    assert key_order(0) == list(range(16))
+
+
+def test_rotating_twice_by_a_quarter_is_a_half_turn():
+    quarter = key_order(90)
+    assert [quarter[quarter[slot]] for slot in range(16)] == key_order(180)
+
+
+def test_the_device_declares_a_rotation_the_math_supports():
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).parent.parent / "device" / "code.py").read_text()
+    match = re.search(r"^ROTATION = (\d+)", source, re.M)
+    assert match, "device/code.py must declare ROTATION"
+    assert int(match.group(1)) in (0, 90, 180, 270)

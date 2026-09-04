@@ -62,11 +62,31 @@ FLASH_SECONDS = 0.35
 # quiet session is never mistaken for a dead one.
 HOST_TIMEOUT = 6.0
 
-# Physical key numbering, from PMK's number_to_xy (x = n % 4, y = n // 4): key 0
-# is bottom-left and numbering runs left to right along each row, so slot 15 is
-# top-right. To turn the board, replace this with the permutation you want; the
-# host is unaware of orientation and always talks in slot numbers.
-KEY_ORDER = list(range(16))
+# How the board is sitting on the desk, in degrees anticlockwise from the
+# orientation Pimoroni ships it in: 0, 90, 180 or 270. Orientation lives here
+# and only here -- the host is unaware of it and always talks in slot numbers.
+#
+# PMK numbers the physical keys with number_to_xy (x = n % 4, y = n // 4), key 0
+# bottom-left, so at ROTATION = 0 slot 15 is the top-right key.
+ROTATION = 180
+
+
+def _key_order(degrees):
+    """Map each logical slot to the physical key that should render it."""
+    order = []
+    for slot in range(16):
+        x, y = slot % 4, slot // 4
+        if degrees == 90:
+            x, y = y, 3 - x
+        elif degrees == 180:
+            x, y = 3 - x, 3 - y
+        elif degrees == 270:
+            x, y = 3 - y, x
+        order.append(y * 4 + x)
+    return order
+
+
+KEY_ORDER = _key_order(ROTATION)
 
 keybow = PMK(Hardware())
 keys = keybow.keys

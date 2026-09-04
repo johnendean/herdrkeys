@@ -31,7 +31,7 @@ noise.
 Press a key to focus that agent -- and to raise the terminal, because focusing
 an agent you cannot see is not focusing it.
 
-The **top-right key** (slot 15) never holds an agent. Press it to jump to the
+The **function key** (slot 15) never holds an agent. Press it to jump to the
 next agent that wants you: `blocked` first, then `done`, wrapping from wherever
 you are. If nothing wants you it flashes rather than doing nothing, so you know
 it heard you. It is also the only key that shows whether the daemon can see
@@ -90,9 +90,10 @@ socket_path       = ""      # override the Herdr socket
 ```
 
 Keys are numbered row-major with key 0 bottom-left, following PMK's own
-`number_to_xy`, so slot 15 is top-right. To turn the board, edit `KEY_ORDER` in
-`device/code.py`; the host knows nothing about orientation and only ever talks
-in slot numbers.
+`number_to_xy`. To turn the board, set `ROTATION` in `device/code.py` to 0, 90,
+180 or 270 degrees anticlockwise from the orientation Pimoroni ships it in, then
+`make deploy`. Orientation lives on the device and only there; the host knows
+nothing about it and only ever talks in slot numbers.
 
 ## How it fits together
 
