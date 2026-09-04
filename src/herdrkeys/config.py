@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 
-def _xdg(var: str, default: str) -> Path:
-    return Path(os.environ.get(var) or Path.home() / default)
+from .paths import resolve_config, state_dir, xdg_config_dir
 
-
-CONFIG_DIR = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or _xdg("XDG_CONFIG_HOME", ".config") / "herdrkeys")
-CONFIG_PATH = CONFIG_DIR / "config.toml"
-STATE_PATH = _xdg("XDG_STATE_HOME", ".local/state") / "herdrkeys" / "slots.json"
+STATE_PATH = state_dir() / "slots.json"
 
 
 @dataclass
@@ -28,16 +23,23 @@ class Config:
     socket_path: Path | None = None
     serial_port: str | None = None
     state_path: Path = STATE_PATH
-    salvage_dir: Path = CONFIG_DIR / "salvage"
+    salvage_dir: Path | None = None  # defaults beside the config file in effect
     provision: bool = True
 
+    def __post_init__(self) -> None:
+        if self.salvage_dir is None:
+            self.salvage_dir = xdg_config_dir() / "salvage"
+
     @classmethod
-    def load(cls, path: Path = CONFIG_PATH) -> Config:
+    def load(cls, path: Path | None = None) -> Config:
+        location = resolve_config()
+        path = path or location.path
+        config = cls()
+        config.salvage_dir = path.parent / "salvage"
         try:
             raw = tomllib.loads(path.read_text())
         except (OSError, tomllib.TOMLDecodeError):
-            return cls()
-        config = cls()
+            return config
         if "settle_ms" in raw:
             config.settle_seconds = float(raw["settle_ms"]) / 1000.0
         if "reconcile_seconds" in raw:

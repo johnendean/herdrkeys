@@ -10,7 +10,8 @@ import os
 import subprocess
 
 from . import activate, discovery, herdr, provision
-from .config import CONFIG_PATH, Config
+from .config import Config
+from .paths import resolve_config
 from .daemon import PROCESS_MARKER, Daemon
 from .device import SerialDevice
 from .model import PROTOCOL_VERSION
@@ -54,7 +55,11 @@ def doctor(config: Config) -> int:
     socket_path = config.socket_path or herdr.default_socket_path()
     daemon_pid = running_daemon_pid()
 
-    print(f"config file      {CONFIG_PATH}{'' if CONFIG_PATH.exists() else '  (absent, using defaults)'}")
+    location = resolve_config()
+    print(f"config file      {location.path}{'' if location.exists else '  (absent, using defaults)'}")
+    for ignored in location.shadowed:
+        ok = False
+        print(f"                 IGNORING {ignored} -- two config files, only the first is read")
     print(f"slot map         {config.state_path}{'' if config.state_path.exists() else '  (absent, will be created)'}")
 
     print(f"herdr socket     {socket_path}", end="  ")

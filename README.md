@@ -98,7 +98,23 @@ of a live Herdr session in `tests/fixtures/`.
 
 ## Configuration
 
-Everything has a working default; `~/.config/herdrkeys/config.toml` is optional.
+Everything has a working default, and the config file is optional.
+
+herdrkeys can be started three ways -- by a Herdr plugin action, by Herdr's
+startup hook, or by hand from a checkout -- and only the first two get
+`HERDR_PLUGIN_CONFIG_DIR` in the environment. Rather than let that decide, the
+plugin's directory is resolved either way and one precedence applies:
+
+| On disk | In effect |
+| --- | --- |
+| both files | the plugin's, and `doctor` names the shadowed one |
+| only `~/.config/herdrkeys/config.toml` | that one; your settings are never silently dropped |
+| only the plugin's | the plugin's |
+| neither | the plugin's directory if Herdr made one, else XDG |
+
+`doctor` always prints the file actually in effect. State is deliberately not
+resolved this way: the slot map and log always live under
+`~/.local/state/herdrkeys/`, so they are in one place whoever started the daemon.
 
 ```toml
 settle_ms         = 300     # how long a state must hold before it lights up

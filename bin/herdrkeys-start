@@ -14,7 +14,9 @@ if pgrep -f 'herdrkeys run' >/dev/null 2>&1; then
     exit 0
 fi
 
-log_dir="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdrkeys}"
+# Always XDG, never HERDR_PLUGIN_STATE_DIR: the log must be in one place
+# whether Herdr started the daemon or a human did.
+log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdrkeys"
 mkdir -p "$log_dir"
 
 # Detached: Herdr's startup hooks are one-shot and are not supervised, so this
