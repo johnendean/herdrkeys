@@ -4,8 +4,8 @@ Same `Device` interface as the real board, so the whole daemon can be driven
 with no hardware attached: frames are drawn as a 4x4 grid and typing a hex digit
 (0-9, a-f) counts as a key press.
 
-The grid mirrors the physical board, where key 0 is bottom-left and numbering
-runs up each column.
+The grid mirrors the physical board: PMK numbers keys row-major (x = n % 4,
+y = n // 4) with key 0 bottom-left, so slot 15 is top-right.
 """
 
 from __future__ import annotations
@@ -37,13 +37,13 @@ SWATCH = {
 
 
 def draw(frame: Frame) -> str:
-    """The frame as a 4x4 grid, key 0 bottom-left, numbering up each column."""
+    """The frame as a 4x4 grid, key 0 bottom-left, numbering along each row."""
     lines = []
     for row_from_top in range(4):
         row = 3 - row_from_top
         cells = []
         for column in range(4):
-            slot = column * 4 + row
+            slot = row * 4 + column
             code = frame.keys[slot]
             colour, label = SWATCH.get(code, ("", code))
             cells.append(f"{colour}[{slot:>2} {code} {label:<8}]{RESET}")

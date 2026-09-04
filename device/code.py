@@ -41,14 +41,20 @@ BASE = {
     "u": (0, 0, 35),      # unknown       dim blue
 }
 OFF = (0, 0, 0)
-FN_IDLE = (16, 16, 16)      # function key, daemon connected
+# Neutral white, green-biased and kept off the floor of the PWM range: at very
+# low duty these LEDs read strongly magenta, because the green die is the least
+# efficient of the three. (16, 16, 16) looked purple on the bench -- close enough
+# to NO_HOST to make the two indistinguishable, which defeats the whole point of
+# this key.
+FN_IDLE = (34, 44, 34)      # function key, daemon connected
 FN_OFFLINE = (70, 0, 0)     # daemon cannot see Herdr; pulses
 FN_FLASH = (140, 140, 140)  # "heard you, nothing wants your attention"
-NO_HOST = (25, 0, 25)       # no daemon has ever said hello
+NO_HOST = (60, 0, 60)       # no daemon; blinks, so hue alone need not carry it
 
 FOCUS_GAIN = 2.5
 BLINK_HZ = 1.4
 PULSE_SECONDS = 2.0
+NO_HOST_BLINK_HZ = 0.4
 FLASH_SECONDS = 0.35
 
 # If the host stops sending, the last frame is a lie: it would keep showing agent
@@ -56,8 +62,9 @@ FLASH_SECONDS = 0.35
 # quiet session is never mistaken for a dead one.
 HOST_TIMEOUT = 6.0
 
-# Physical key numbering: key 0 is bottom-left and numbering runs up each
-# column. To turn the board, replace this with the permutation you want; the
+# Physical key numbering, from PMK's number_to_xy (x = n % 4, y = n // 4): key 0
+# is bottom-left and numbering runs left to right along each row, so slot 15 is
+# top-right. To turn the board, replace this with the permutation you want; the
 # host is unaware of orientation and always talks in slot numbers.
 KEY_ORDER = list(range(16))
 
@@ -118,9 +125,13 @@ def colour_for(code, now):
 
 def paint(now):
     stale = frame is None or (now - frame_at) > HOST_TIMEOUT
+    # A slow blink rather than a steady colour: whether a hue reads as intended
+    # depends on the LED, but motion does not, and this must never be mistaken
+    # for the steady white that means all is well.
+    no_host = NO_HOST if int(now * NO_HOST_BLINK_HZ * 2) % 2 == 0 else OFF
     for slot in range(16):
         if stale:
-            rgb = NO_HOST if slot == 15 else OFF
+            rgb = no_host if slot == 15 else OFF
         else:
             rgb = colour_for(frame[slot], now)
         key = KEY_ORDER[slot]
