@@ -116,6 +116,18 @@ plugin's directory is resolved either way and one precedence applies:
 resolved this way: the slot map and log always live under
 `~/.local/state/herdrkeys/`, so they are in one place whoever started the daemon.
 
+### Named sessions
+
+There is one keypad, so there is one daemon, and it targets Herdr's **default**
+session. The startup hook deliberately does not inherit the socket of whichever
+server invoked it -- otherwise a named or throwaway session could capture the
+keypad just by starting first. To follow a named session instead, set its socket
+explicitly:
+
+```toml
+socket_path = "~/.config/herdr/sessions/<name>/herdr.sock"
+```
+
 ```toml
 settle_ms         = 300     # how long a state must hold before it lights up
 provision         = true    # write firmware to an unprovisioned board
