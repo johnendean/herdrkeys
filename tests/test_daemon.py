@@ -288,3 +288,99 @@ def test_a_busy_session_still_lights_up_eventually(rig, monkeypatch):
 
     assert not instance._backlog_done(100.5), "still arriving, deadline not reached"
     assert instance._backlog_done(100.0 + daemon_module.BACKLOG_MAX_SECONDS)
+
+
+# -- provisioning --------------------------------------------------------
+
+
+@pytest.fixture
+def board(tmp_path, monkeypatch):
+    """A daemon with no keypad attached, and a fake board on a fake drive."""
+    drive = tmp_path / "CIRCUITPY"
+    drive.mkdir()
+    calls = {"copied": [], "reset": []}
+    monkeypatch.setattr(daemon_module.provision, "copy_firmware", lambda d: calls["copied"].append(d))
+    monkeypatch.setattr(daemon_module.provision, "hard_reset", lambda p: calls["reset"].append(p) or True)
+    monkeypatch.setattr(
+        daemon_module.discovery, "find_ports",
+        lambda: [type("P", (), {"device": "/dev/console", "interface": 0})()],
+    )
+    return drive, calls
+
+
+def set_board(monkeypatch, drive, state):
+    from herdrkeys.provision import Board
+
+    monkeypatch.setattr(
+        daemon_module.provision, "inspect",
+        lambda *a, **k: None if state is None else Board(drive=drive, state=state),
+    )
+
+
+def test_a_board_running_our_firmware_is_provisioned(rig, board, monkeypatch):
+    from herdrkeys.provision import DriveState
+
+    instance, _device, _focused, _ = rig
+    drive, calls = board
+    set_board(monkeypatch, drive, DriveState.OURS)
+
+    instance._maybe_provision(0.0)
+    assert calls["copied"] == [drive]
+    assert calls["reset"] == ["/dev/console"], "boot.py needs a re-enumeration to take effect"
+
+
+def test_an_empty_board_is_provisioned(rig, board, monkeypatch):
+    from herdrkeys.provision import DriveState
+
+    instance, _device, _focused, _ = rig
+    drive, calls = board
+    set_board(monkeypatch, drive, DriveState.BLANK)
+    instance._maybe_provision(0.0)
+    assert calls["copied"] == [drive]
+
+
+def test_somebody_elses_board_is_never_written_to(rig, board, monkeypatch, caplog):
+    from herdrkeys.provision import DriveState
+
+    instance, _device, _focused, _ = rig
+    drive, calls = board
+    set_board(monkeypatch, drive, DriveState.FOREIGN)
+
+    with caplog.at_level("WARNING"):
+        instance._maybe_provision(0.0)
+    assert calls["copied"] == [] and calls["reset"] == []
+    assert "adopt" in caplog.text, "and the user is told how to take it over deliberately"
+
+
+def test_the_refusal_is_not_repeated_every_retry(rig, board, monkeypatch, caplog):
+    from herdrkeys.provision import DriveState
+
+    instance, _device, _focused, _ = rig
+    drive, _calls = board
+    set_board(monkeypatch, drive, DriveState.FOREIGN)
+
+    with caplog.at_level("WARNING"):
+        for tick in range(0, 600, 60):
+            instance._provision_backoff.succeeded()
+            instance._maybe_provision(float(tick))
+    assert caplog.text.count("leaving it alone") == 1, "a reconnect loop must not become a log flood"
+
+
+def test_provisioning_can_be_switched_off(rig, board, monkeypatch):
+    from herdrkeys.provision import DriveState
+
+    instance, _device, _focused, _ = rig
+    drive, calls = board
+    set_board(monkeypatch, drive, DriveState.OURS)
+    instance.config.provision = False
+    instance._maybe_provision(0.0)
+    assert calls["copied"] == []
+
+
+def test_no_keybow_attached_does_nothing_at_all(rig, monkeypatch):
+    instance, _device, _focused, _ = rig
+    monkeypatch.setattr(daemon_module.discovery, "find_ports", lambda: [])
+    called = []
+    monkeypatch.setattr(daemon_module.provision, "inspect", lambda *a, **k: called.append(True))
+    instance._maybe_provision(0.0)
+    assert called == [], "no board means nothing to inspect"

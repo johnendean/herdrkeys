@@ -3,7 +3,7 @@ name = "herdrkeys"
 version = "0.1.0"
 description = "Bind a Pimoroni Keybow 2040 to a running Herdr session"
 requires-python = ">=3.11"
-dependencies = ["pyserial>=3.5"]
+dependencies = []  # deliberately none: see ADR 0003
 
 [project.scripts]
 herdrkeys = "herdrkeys.cli:main"

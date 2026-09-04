@@ -17,9 +17,11 @@ press, not release.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Protocol
 
 from .model import PROTOCOL_VERSION, Frame
+from .serial_port import SerialPort
 
 
 class DeviceError(RuntimeError):
@@ -60,18 +62,14 @@ class SerialDevice:
     """A Keybow on the other end of a CDC data port."""
 
     def __init__(self, port: str, *, baudrate: int = 115200, handshake_timeout: float = 3.0) -> None:
-        import serial  # imported here so tests and the TUI need no hardware deps
-
-        self._serial = serial.Serial(port, baudrate, timeout=0)
+        self._serial = SerialPort(port, baudrate)
         self.port = port
         self._buffer = b""
         self.firmware = self._handshake(handshake_timeout)
 
     def _handshake(self, timeout: float) -> str:
         """Confirm a herdrkeys firmware is listening, and that its protocol matches."""
-        import time
-
-        self._serial.reset_input_buffer()
+        self._serial.reset_input()
         self._serial.write(encode_hello())
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -89,8 +87,8 @@ class SerialDevice:
 
     def _read_messages(self) -> list[dict[str, Any]]:
         try:
-            chunk = self._serial.read(4096)
-        except Exception as exc:  # pyserial raises a zoo of errors on unplug
+            chunk = self._serial.read()
+        except OSError as exc:  # the port goes away when the board is unplugged
             raise DeviceError(f"{self.port}: {exc}") from exc
         if chunk:
             self._buffer += chunk
@@ -112,7 +110,7 @@ class SerialDevice:
     def _write(self, payload: bytes) -> None:
         try:
             self._serial.write(payload)
-        except Exception as exc:
+        except OSError as exc:
             raise DeviceError(f"{self.port}: {exc}") from exc
 
     def send_frame(self, frame: Frame) -> None:
@@ -125,10 +123,7 @@ class SerialDevice:
         return decode_presses(self._read_messages())
 
     def close(self) -> None:
-        try:
-            self._serial.close()
-        except Exception:
-            pass
+        self._serial.close()
 
 
 class FakeDevice:

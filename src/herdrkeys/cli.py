@@ -9,7 +9,7 @@ import sys
 import os
 import subprocess
 
-from . import activate, discovery, herdr
+from . import activate, discovery, herdr, provision
 from .config import CONFIG_PATH, Config
 from .daemon import PROCESS_MARKER, Daemon
 from .device import SerialDevice
@@ -72,8 +72,14 @@ def doctor(config: Config) -> int:
         print("keybow           NOT FOUND  (no 16d0:08c6 serial ports; is it plugged in?)")
     elif len(ports) == 1:
         ok = False
-        print(f"keybow           {ports[0].device}  console only")
-        print("                 no data channel -- deploy device/boot.py and replug (make deploy)")
+        print(f"keybow           {ports[0].device}  console only, no data channel")
+        board = provision.inspect()
+        if board is None:
+            print("                 CIRCUITPY not mounted; cannot provision it")
+        elif board.may_write:
+            print(f"                 {board.drive} is {board.state.value}; the daemon will provision it")
+        else:
+            print(f"                 {board.drive} carries other firmware -- run 'herdrkeys adopt' to save it and take over")
     else:
         port = config.serial_port or ports[-1].device
         print(f"keybow           {port}  (console {ports[0].device})", end="  ")
@@ -101,6 +107,41 @@ def doctor(config: Config) -> int:
     return 0 if ok else 1
 
 
+def adopt(config: Config) -> int:
+    """Take over a board carrying somebody else's firmware, saving it first."""
+    board = provision.inspect()
+    if board is None:
+        print("no Keybow 2040 found -- plug it in and check its CIRCUITPY drive is mounted")
+        return 1
+
+    print(f"board            {board.drive}  ({board.state.value})")
+    if board.state is provision.DriveState.OURS:
+        print("already running herdrkeys; nothing to salvage")
+    else:
+        saved = provision.salvage(board.drive, config.salvage_dir)
+        if saved:
+            print(f"saved            {len(saved)} file(s) to {config.salvage_dir}")
+            for path in saved:
+                print(f"                 {path.name}")
+        else:
+            print("nothing to salvage; the board is empty")
+
+    try:
+        provision.copy_firmware(board.drive)
+    except (OSError, FileNotFoundError) as exc:
+        print(f"could not write the firmware: {exc}")
+        return 1
+    print("wrote            boot.py, code.py")
+
+    ports = discovery.find_ports()
+    if ports and provision.hard_reset(ports[0].device):
+        print("reset            board re-enumerating; it will reconnect in a few seconds")
+    else:
+        print("reset            FAILED -- unplug and replug the board to finish")
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="herdrkeys", description="Bind a Keybow 2040 to Herdr.")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -108,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("run", help="run the daemon against the real keypad (default)")
     sub.add_parser("tui", help="run the daemon against a keypad drawn in the terminal")
     sub.add_parser("doctor", help="check everything the daemon depends on")
+    sub.add_parser("adopt", help="take over a board, saving any firmware already on it")
     args = parser.parse_args(argv)
 
     _configure_logging(args.verbose)
@@ -115,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return doctor(config)
+
+    if args.command == "adopt":
+        return adopt(config)
 
     if args.command == "tui":
         from .tui import TuiDevice

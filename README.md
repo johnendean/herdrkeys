@@ -41,16 +41,35 @@ thing.
 ## Install
 
 ```bash
-make venv            # create .venv and install
-make deploy          # copy device/ onto CIRCUITPY
-                     # then UNPLUG AND REPLUG the Keybow -- boot.py only takes
-                     # effect on a power cycle, and it is what creates the data
-                     # channel the daemon talks to
-make doctor          # check herdr, the keypad, and the terminal app
-make install-agent   # run it at login under launchd
+herdr plugin install <owner>/herdrkeys
 ```
 
-`make doctor` tells you which half is unhappy:
+That is the whole install. With the keypad plugged in, the daemon writes the
+firmware, resets the board so `boot.py` takes effect, and connects -- no venv,
+no pip, no replugging. herdrkeys has no dependencies outside the standard
+library, so it runs against the system `python3`.
+
+**If your Keybow already carries firmware of your own**, herdrkeys will not
+touch it. The keypad stays dark and the log tells you to run:
+
+```bash
+herdr plugin action invoke herdrkeys.adopt
+```
+
+which copies what is on the board into the plugin's config directory --
+timestamped, so it never overwrites an earlier rescue -- and only then takes the
+board over. See [ADR 0004](docs/adr/0004-provision-only-with-consent.md).
+
+From a checkout instead:
+
+```bash
+make link            # herdr plugin link, for local development
+make run             # or run the daemon in the foreground
+make install-agent   # optional: supervise it with launchd instead
+```
+
+`herdr plugin action invoke herdrkeys.doctor` (or `make doctor`) tells you
+which half is unhappy:
 
 ```
 config file      ~/.config/herdrkeys/config.toml  (absent, using defaults)
@@ -67,7 +86,8 @@ already running `doctor` reports the port as in use rather than probing it.
 ## Developing without hardware
 
 ```bash
-make test   # 53 tests, no keypad and no running Herdr required
+make venv   # pytest is the only dependency, and only for the tests
+make test   # 87 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -82,6 +102,7 @@ Everything has a working default; `~/.config/herdrkeys/config.toml` is optional.
 
 ```toml
 settle_ms         = 300     # how long a state must hold before it lights up
+provision         = true    # write firmware to an unprovisioned board
 reconcile_seconds = 30      # how often to re-sync against session.snapshot
 activate_terminal = true    # raise the terminal when focusing an agent
 terminal_app      = ""      # override the auto-detected .app bundle

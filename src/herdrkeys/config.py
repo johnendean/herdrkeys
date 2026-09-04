@@ -12,7 +12,8 @@ def _xdg(var: str, default: str) -> Path:
     return Path(os.environ.get(var) or Path.home() / default)
 
 
-CONFIG_PATH = _xdg("XDG_CONFIG_HOME", ".config") / "herdrkeys" / "config.toml"
+CONFIG_DIR = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or _xdg("XDG_CONFIG_HOME", ".config") / "herdrkeys")
+CONFIG_PATH = CONFIG_DIR / "config.toml"
 STATE_PATH = _xdg("XDG_STATE_HOME", ".local/state") / "herdrkeys" / "slots.json"
 
 
@@ -27,6 +28,8 @@ class Config:
     socket_path: Path | None = None
     serial_port: str | None = None
     state_path: Path = STATE_PATH
+    salvage_dir: Path = CONFIG_DIR / "salvage"
+    provision: bool = True
 
     @classmethod
     def load(cls, path: Path = CONFIG_PATH) -> Config:
@@ -39,6 +42,10 @@ class Config:
             config.settle_seconds = float(raw["settle_ms"]) / 1000.0
         if "reconcile_seconds" in raw:
             config.reconcile_seconds = float(raw["reconcile_seconds"])
+        if "provision" in raw:
+            config.provision = bool(raw["provision"])
+        if raw.get("salvage_dir"):
+            config.salvage_dir = Path(str(raw["salvage_dir"])).expanduser()
         if "activate_terminal" in raw:
             config.activate_terminal = bool(raw["activate_terminal"])
         if raw.get("terminal_app"):

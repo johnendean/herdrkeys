@@ -1,0 +1,33 @@
+id = "herdrkeys"
+name = "herdrkeys"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Show Herdr agent state on a Pimoroni Keybow 2040, and focus agents from its keys"
+platforms = ["macos"]
+
+# No build step in the usual sense: the daemon has no third-party dependencies,
+# so there is nothing to compile or install. This only starts it, so that
+# installing the plugin is enough on its own -- startup hooks do not run until
+# Herdr next starts.
+[[build]]
+command = ["./bin/herdrkeys-start"]
+
+# Startup hooks are one-shot and unsupervised, so this script detaches the
+# daemon and exits. The daemon reconnects to both Herdr and the keypad on its
+# own and never exits voluntarily.
+[[startup]]
+command = ["./bin/herdrkeys-start"]
+
+[[actions]]
+id = "doctor"
+title = "herdrkeys: check setup"
+description = "Report on Herdr, the keypad, and the daemon"
+contexts = ["global"]
+command = ["./bin/herdrkeys", "doctor"]
+
+[[actions]]
+id = "adopt"
+title = "herdrkeys: adopt this keypad"
+description = "Save any firmware already on the board, then take it over"
+contexts = ["global"]
+command = ["./bin/herdrkeys", "adopt"]

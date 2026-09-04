@@ -1,0 +1,9 @@
+#!/bin/sh
+# Run herdrkeys from a checkout or an installed plugin, with no venv and no
+# install step: the daemon has no third-party dependencies, so the system
+# python3 is enough.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m herdrkeys "$@"

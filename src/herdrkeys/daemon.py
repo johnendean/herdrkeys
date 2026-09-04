@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import activate as activate_app
-from . import discovery, herdr, reducer
+from . import discovery, herdr, provision, reducer
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
 from .herdr_state import HerdrState
@@ -96,6 +96,8 @@ class Daemon:
         self._backlog_settling = False
         self._last_event_at = 0.0
         self._backlog_deadline = 0.0
+        self._provision_backoff = Backoff(5.0, 60.0)
+        self._refused: str | None = None
         self._host_app: str | None = config.terminal_app
 
     # -- connections -----------------------------------------------------
@@ -131,6 +133,7 @@ class Daemon:
             return
         port = self.config.serial_port or discovery.find_data_port()
         if port is None:
+            self._maybe_provision(now)
             self._device_backoff.failed(now)
             return
         try:
@@ -142,6 +145,46 @@ class Daemon:
             self.device = None
             self._device_backoff.failed(now)
             log.debug("keypad connect failed: %s", exc)
+
+    def _maybe_provision(self, now: float) -> None:
+        """Put the firmware on a board that has no data channel yet.
+
+        Only a board already running herdrkeys, or carrying nothing, is written
+        to. Somebody else's firmware is left alone: it may be the only copy they
+        have, and installing herdrkeys is not consent to destroy it days later
+        when a different board gets plugged in.
+        """
+        if not self.config.provision or not self._provision_backoff.ready(now):
+            return
+        ports = discovery.find_ports()
+        if not ports:
+            return  # no Keybow attached at all
+        board = provision.inspect()
+        if board is None:
+            self._provision_backoff.failed(now)
+            log.warning("keybow present but its CIRCUITPY drive is not mounted")
+            return
+        if not board.may_write:
+            self._provision_backoff.failed(now)
+            if self._refused != str(board.drive):
+                self._refused = str(board.drive)
+                log.warning(
+                    "%s carries firmware that is not herdrkeys; leaving it alone. "
+                    "Run 'herdrkeys adopt' to save it and take the board over.",
+                    board.drive,
+                )
+            return
+        self._refused = None
+        try:
+            provision.copy_firmware(board.drive)
+        except (OSError, FileNotFoundError) as exc:
+            self._provision_backoff.failed(now)
+            log.warning("could not write firmware to %s: %s", board.drive, exc)
+            return
+        log.info("wrote firmware to %s; resetting the board", board.drive)
+        if not provision.hard_reset(ports[0].device):
+            log.warning("could not reset the board; unplug and replug it to finish")
+        self._provision_backoff.failed(now)
 
     def _drop_device(self, now: float, reason: str) -> None:
         log.warning("keypad connection lost: %s", reason)

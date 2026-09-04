@@ -1,0 +1,24 @@
+#!/bin/sh
+# Start the daemon unless it is already running. Idempotent, because Herdr runs
+# it both at install (via build) and at every server start (via startup).
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "herdrkeys: python3 not found; herdrkeys cannot run" >&2
+    exit 1
+fi
+
+if pgrep -f 'herdrkeys run' >/dev/null 2>&1; then
+    echo "herdrkeys: already running"
+    exit 0
+fi
+
+log_dir="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdrkeys}"
+mkdir -p "$log_dir"
+
+# Detached: Herdr's startup hooks are one-shot and are not supervised, so this
+# must outlive the hook that launched it.
+nohup "$root/bin/herdrkeys" run >>"$log_dir/herdrkeys.log" 2>&1 &
+echo "herdrkeys: started, logging to $log_dir/herdrkeys.log"
+exit 0
