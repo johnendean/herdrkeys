@@ -9,8 +9,14 @@ from dataclasses import dataclass
 from enum import Enum
 
 SLOT_COUNT = 16
+
+# One row of four holds no agents. Twelve keys is more grid than the agents
+# have ever asked for, so that row is free for keys that do something else.
+# Which row it is physically depends on ROTATION, which only the device knows.
 FN_SLOT = 15
-AGENT_SLOTS = tuple(range(FN_SLOT))  # 0..14
+MIC_SLOT = 12
+FEATURE_SLOTS = (12, 13, 14, 15)
+AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: see next_attention_target
 
 PROTOCOL_VERSION = 1
 
@@ -30,6 +36,7 @@ class AgentState(str, Enum):
 EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
+MIC = "m"  # the device decides what a microphone key emits, and what it looks like
 
 _STATE_CODE = {
     AgentState.IDLE: "i",
@@ -43,6 +50,18 @@ _STATE_CODE = {
 def state_code(state: AgentState, *, focused: bool) -> str:
     code = _STATE_CODE[state]
     return code.upper() if focused else code
+
+
+def feature_keys(*, connected: bool) -> list[str]:
+    """An empty frame with the feature row already filled in.
+
+    One place decides what the non-agent keys show, so a frame and a blank frame
+    can never disagree about them.
+    """
+    keys = [EMPTY] * SLOT_COUNT
+    keys[MIC_SLOT] = MIC
+    keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
+    return keys
 
 
 @dataclass(frozen=True)
@@ -67,5 +86,4 @@ class Frame:
 
     @classmethod
     def blank(cls, *, connected: bool) -> Frame:
-        fn = FN_CONNECTED if connected else FN_DISCONNECTED
-        return cls(EMPTY * FN_SLOT + fn)
+        return cls("".join(feature_keys(connected=connected)))

@@ -7,7 +7,7 @@ from herdrkeys import daemon as daemon_module
 from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
 from herdrkeys.device import FakeDevice
-from herdrkeys.model import FN_SLOT, AgentState
+from herdrkeys.model import FEATURE_SLOTS, FN_SLOT, MIC_SLOT, AgentState
 
 
 @pytest.fixture
@@ -78,6 +78,25 @@ def test_activation_can_be_switched_off(rig):
     load(instance, [agent_pane("w1:p1", "idle")], "w1:p1")
     instance.handle_press(0)
     assert focused == ["w1:p1"] and activated == []
+
+
+def test_pressing_the_mic_key_does_nothing_on_the_host(rig):
+    # The keystroke is the board's job. The host must not focus an agent, must
+    # not flash "nothing wants you", and must not care that the press happened.
+    instance, device, focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
+
+    instance.handle_press(MIC_SLOT)
+    assert focused == [] and device.flashes == 0
+
+
+def test_no_feature_key_can_focus_an_agent(rig):
+    instance, _device, focused, _ = rig
+    load(instance, [agent_pane(f"w{i}:p1", "idle") for i in range(1, 13)], "w1:p1")
+    for slot in FEATURE_SLOTS:
+        if slot != FN_SLOT:
+            instance.handle_press(slot)
+    assert focused == []
 
 
 def test_the_slot_map_survives_a_restart(rig, tmp_path):

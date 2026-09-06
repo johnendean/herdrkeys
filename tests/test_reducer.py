@@ -1,6 +1,15 @@
 import pytest
 
-from herdrkeys.model import EMPTY, FN_CONNECTED, FN_DISCONNECTED, AgentPane, AgentState
+from herdrkeys.model import (
+    EMPTY,
+    FEATURE_SLOTS,
+    FN_CONNECTED,
+    FN_DISCONNECTED,
+    MIC,
+    MIC_SLOT,
+    AgentPane,
+    AgentState,
+)
 from herdrkeys.reducer import (
     next_attention_target,
     pane_for_slot,
@@ -28,7 +37,7 @@ def test_frame_is_one_character_per_key():
     panes = {"a": pane("a", AgentState.WORKING)}
     slots = SlotMap({0: "a"})
     frame = render(panes, slots, settled(*panes.values()), connected=True)
-    assert frame.keys == "w" + EMPTY * 14 + FN_CONNECTED
+    assert frame.keys == "w" + EMPTY * 11 + MIC + EMPTY * 2 + FN_CONNECTED
 
 
 def test_focus_is_shown_by_case_not_by_a_different_state():
@@ -142,7 +151,7 @@ def test_a_pane_that_has_not_settled_yet_is_not_a_target():
 # -- key presses ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("slot", [0, 7, 14])
+@pytest.mark.parametrize("slot", [0, 7, 11])
 def test_press_resolves_to_the_pane_in_that_slot(slot):
     panes = {"a": pane("a", AgentState.IDLE)}
     assert pane_for_slot(slot, panes, SlotMap({slot: "a"})) == "a"
@@ -153,5 +162,17 @@ def test_press_on_an_empty_or_stale_slot_resolves_to_nothing():
     assert pane_for_slot(3, {}, SlotMap({3: "gone"})) is None
 
 
-def test_the_function_key_is_not_an_agent_slot():
-    assert pane_for_slot(15, {"a": pane("a", AgentState.IDLE)}, SlotMap({15: "a"})) is None
+@pytest.mark.parametrize("slot", FEATURE_SLOTS)
+def test_no_feature_key_is_an_agent_slot(slot):
+    # Even a slot map that somehow binds one -- an older state file, a hand edit
+    # -- must not turn a feature key into an agent key under a finger.
+    assert pane_for_slot(slot, {"a": pane("a", AgentState.IDLE)}, SlotMap({slot: "a"})) is None
+
+
+def test_the_feature_row_is_in_every_frame():
+    # The mic key is not a status light: it is there whether or not Herdr is
+    # reachable, because dictation has nothing to do with Herdr.
+    for connected in (True, False):
+        frame = render({}, SlotMap(), Settler(), connected=connected)
+        assert frame.keys[MIC_SLOT] == MIC
+        assert frame.keys[13] == frame.keys[14] == EMPTY, "13 and 14 are spare, and dark"

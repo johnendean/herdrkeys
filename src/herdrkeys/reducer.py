@@ -9,13 +9,10 @@ from __future__ import annotations
 
 from .model import (
     AGENT_SLOTS,
-    EMPTY,
-    FN_CONNECTED,
-    FN_DISCONNECTED,
-    FN_SLOT,
     AgentPane,
     AgentState,
     Frame,
+    feature_keys,
     state_code,
 )
 from .settling import Settler
@@ -33,7 +30,7 @@ def render(
     *,
     connected: bool,
 ) -> Frame:
-    keys = [EMPTY] * (FN_SLOT + 1)
+    keys = feature_keys(connected=connected)
     for slot in AGENT_SLOTS:
         pane_id = slots.pane_at(slot)
         if pane_id is None:
@@ -45,7 +42,6 @@ def render(
         if state is None:
             continue  # not settled yet: stay dark rather than strobe
         keys[slot] = state_code(state, focused=pane.focused)
-    keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return Frame("".join(keys))
 
 
