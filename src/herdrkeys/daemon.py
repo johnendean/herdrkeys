@@ -366,6 +366,12 @@ class Daemon:
                 except (OSError, herdr.HerdrError) as exc:
                     self._drop_herdr(now, str(exc))
 
+            # Render before sleeping, never after: rendering is what starts a
+            # state settling, so doing it on the far side of the select would
+            # add a whole select's worth of delay to everything the poll
+            # learned. It is also what puts the settle deadline into _timeout.
+            self._push(self.render(now), now)
+
             selector = selectors.DefaultSelector()
             if self.stream is not None:
                 selector.register(self.stream.fileno(), selectors.EVENT_READ, "herdr")
@@ -384,5 +390,3 @@ class Daemon:
                 self._settle_backlog(now)
             if "device" in woken:
                 self._pump_device(now)
-
-            self._push(self.render(self.clock()), now)
