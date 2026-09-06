@@ -290,6 +290,111 @@ def test_a_busy_session_still_lights_up_eventually(rig, monkeypatch):
     assert instance._backlog_done(100.0 + daemon_module.BACKLOG_MAX_SECONDS)
 
 
+# -- status polling ------------------------------------------------------
+
+
+def agent_row(pane_id, status, revision=1, focused=False):
+    """One row of `agent.list`, shaped as Herdr returns it."""
+    return {"pane_id": pane_id, "agent": "claude", "agent_status": status,
+            "revision": revision, "focused": focused}
+
+
+def test_status_comes_from_the_poll_when_no_event_ever_arrives(rig, monkeypatch):
+    # Measured live: the stream replays its backlog at ten events a second and
+    # then goes quiet, delivering nothing for the next two minutes while five
+    # real status changes happened. Colour cannot wait on it. See ADR 0005.
+    instance, device, _focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "working")], "w1:p1")
+    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [agent_row("w1:p1", "blocked", focused=True)])
+
+    instance._poll_status(10.0)
+    instance._push(instance.render(10.0), 10.0)
+    assert device.last_frame.keys[0] == "B", "no event arrived, and the key changed anyway"
+
+
+def test_the_poll_paces_itself_and_keeps_the_loop_awake(rig, monkeypatch):
+    instance, _device, _focused, _ = rig
+    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [])
+    instance.stream = object()
+    instance.config.status_poll_seconds = 0.5
+    instance._last_push_at = 100.0
+    instance._next_reconcile = 130.0
+
+    instance._poll_status(100.0)
+    assert instance._next_status_poll == 100.5
+    assert instance._timeout(100.0) == 0.5, "the loop must wake for its own poll"
+
+
+def test_an_agent_leaving_goes_dark_but_keeps_its_slot(rig, monkeypatch):
+    # `agent.list` only lists agent panes, so absence means the agent left --
+    # never that the pane did. Slots outlive agents (ADR 0002).
+    instance, _device, _focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "working")], "w1:p1")
+    assert instance.slots.slot_of("w2:p1") == 1
+    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [agent_row("w1:p1", "idle", focused=True)])
+
+    instance._poll_status(10.0)
+    assert instance.render(10.0).keys[1] == "-"
+    assert instance.slots.slot_of("w2:p1") == 1, "restarting an agent in place keeps its key"
+
+
+def test_an_agent_the_poll_finds_first_gets_a_slot(rig, monkeypatch):
+    instance, _device, _focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle")], "w1:p1")
+    monkeypatch.setattr(
+        daemon_module.herdr,
+        "agents",
+        lambda path: [agent_row("w1:p1", "idle", focused=True), agent_row("w5:p2", "working")],
+    )
+
+    instance._poll_status(10.0)
+    frame = instance.render(10.0)
+    assert instance.slots.slot_of("w5:p2") == 1
+    assert frame.keys[1] == "w", "a new agent need not wait for the next reconcile"
+
+
+def test_the_poll_releases_focus_it_can_see_has_moved(rig, monkeypatch):
+    # Focus is brightness. `agent.list` cannot name a shell pane, but a row
+    # saying "not me" is enough to stop a key claiming focus it lost.
+    instance, _device, _focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle", focused=True)], "w1:p1")
+    assert instance.render(10.0).keys[0] == "I"
+
+    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [agent_row("w1:p1", "idle")])
+    instance._poll_status(10.0)
+    assert instance.render(10.0).keys[0] == "i"
+
+
+def test_a_failed_poll_drops_herdr_like_any_other_request(rig, monkeypatch):
+    instance, _device, _focused, _ = rig
+
+    class Stream:
+        def close(self):
+            pass
+
+    instance.stream = Stream()
+
+    def gone(path):
+        raise daemon_module.herdr.HerdrError("agent.list: connection closed before a reply")
+
+    monkeypatch.setattr(daemon_module.herdr, "agents", gone)
+    instance._poll_status(5.0)
+    assert instance.stream is None, "the function key must show Herdr is gone"
+
+
+def test_a_replayed_event_cannot_undo_a_poll():
+    # The revision guard drops updates older than what we hold, so the poll has
+    # to leave the high-water revision behind it -- a row carrying a lower one
+    # would otherwise let stale history win the moment the replay resumed.
+    from herdrkeys.herdr_state import HerdrState
+
+    state = HerdrState()
+    state.apply_snapshot({"panes": [agent_pane("w1:p1", "working", revision=36)], "focused_pane_id": None})
+    state.apply_agents([agent_row("w1:p1", "blocked", revision=0)])
+    state.apply_event({"data": {"type": "pane_updated", "pane": agent_pane("w1:p1", "idle", revision=12)}})
+    assert state.panes["w1:p1"].state is AgentState.BLOCKED
+
+
 # -- provisioning --------------------------------------------------------
 
 
