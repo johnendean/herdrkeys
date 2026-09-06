@@ -373,10 +373,20 @@ class Daemon:
             self._push(self.render(now), now)
 
             selector = selectors.DefaultSelector()
+            # Registering a descriptor that has gone stale -- the keypad
+            # unplugged, or re-enumerated by a deploy -- raises EINVAL from
+            # kqueue rather than failing later at read time. Uncaught, that
+            # killed a daemon that is supposed to outlive both its connections.
             if self.stream is not None:
-                selector.register(self.stream.fileno(), selectors.EVENT_READ, "herdr")
+                try:
+                    selector.register(self.stream.fileno(), selectors.EVENT_READ, "herdr")
+                except (OSError, ValueError) as exc:
+                    self._drop_herdr(now, str(exc))
             if self.device is not None:
-                selector.register(self.device.fileno(), selectors.EVENT_READ, "device")
+                try:
+                    selector.register(self.device.fileno(), selectors.EVENT_READ, "device")
+                except (OSError, ValueError) as exc:
+                    self._drop_device(now, str(exc))
             try:
                 ready = selector.select(self._timeout(now))
             finally:

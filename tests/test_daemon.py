@@ -290,6 +290,40 @@ def test_a_busy_session_still_lights_up_eventually(rig, monkeypatch):
     assert instance._backlog_done(100.0 + daemon_module.BACKLOG_MAX_SECONDS)
 
 
+def test_a_stale_descriptor_drops_the_keypad_rather_than_the_daemon(rig, monkeypatch):
+    # kqueue refuses a descriptor that has gone stale -- the keypad unplugged, or
+    # re-enumerated by a deploy -- with EINVAL, at registration rather than at
+    # read time. Uncaught, that killed a daemon documented as never exiting
+    # voluntarily, and the keypad stayed dark until someone noticed.
+    instance, device, _focused, _ = rig
+
+    class Stop(Exception):
+        """Ends run_forever from the clock, since nothing else ever does."""
+
+    def stale_fileno():
+        raise OSError(22, "Invalid argument")
+
+    device.fileno = stale_fileno
+    instance._herdr_backoff = Backoff(0.0, 0.0)
+    instance._device_backoff = Backoff(0.0, 0.0)
+    monkeypatch.setattr(daemon_module.herdr, "EventStream", lambda path, **kw: (_ for _ in ()).throw(OSError("no herdr")))
+
+    ticks = iter([0.0, 0.01, 0.02, 0.03])
+
+    def clock():
+        try:
+            return next(ticks)
+        except StopIteration:
+            raise Stop
+
+    instance.clock = clock
+    with pytest.raises(Stop):
+        instance.run_forever()
+
+    assert instance.device is None, "the keypad was dropped; the daemon kept running"
+    assert device.closed
+
+
 # -- status polling ------------------------------------------------------
 
 
