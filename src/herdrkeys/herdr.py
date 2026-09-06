@@ -20,8 +20,11 @@ from pathlib import Path
 from typing import Any
 
 # Global subscriptions. `pane.agent_status_changed` is deliberately absent: it
-# requires a specific pane_id, so it cannot be subscribed to globally. The
-# `pane_updated` payload carries `agent` and `agent_status` anyway.
+# requires a specific pane_id, so it cannot be subscribed to globally.
+#
+# None of these is trusted for agent status. The stream replays a backlog and
+# then goes quiet (ADR 0005), so status is polled with `agent.list` and these
+# events only shorten the wait when they do arrive.
 SUBSCRIPTIONS = [
     {"type": "pane.created"},
     {"type": "pane.updated"},
@@ -75,6 +78,16 @@ def request(path: Path, method: str, params: dict[str, Any] | None = None, *, ti
 
 def snapshot(path: Path, *, timeout: float = 5.0) -> dict[str, Any]:
     return request(path, "session.snapshot", timeout=timeout).get("snapshot") or {}
+
+
+def agents(path: Path, *, timeout: float = 5.0) -> list[dict[str, Any]]:
+    """Every agent pane and the state it is in, right now.
+
+    The status source. `agent.list` is cheap enough to poll -- a round trip
+    measured at 0.22ms against a live session -- and unlike the event stream it
+    cannot fall behind: it is a question, not a feed. See ADR 0005.
+    """
+    return request(path, "agent.list", timeout=timeout).get("agents") or []
 
 
 def focus_agent(path: Path, pane_id: str, *, timeout: float = 5.0) -> None:

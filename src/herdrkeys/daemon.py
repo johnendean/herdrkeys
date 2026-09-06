@@ -93,6 +93,7 @@ class Daemon:
         self._herdr_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
         self._device_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
         self._next_reconcile = 0.0
+        self._next_status_poll = 0.0
         self._backlog_settling = False
         self._last_event_at = 0.0
         self._backlog_deadline = 0.0
@@ -208,6 +209,23 @@ class Daemon:
         self.slots.gc(self.state.live_pane_ids())
         self._next_reconcile = now + self.config.reconcile_seconds
 
+    def _poll_status(self, now: float) -> None:
+        """Ask Herdr what every agent is doing.
+
+        The event stream cannot be relied on for this. Measured against a live
+        session: `events.subscribe` replays its backlog at about ten events a
+        second and then goes quiet, delivering nothing for the next two minutes
+        while five real status changes happened. Rendering what the stream says
+        therefore means rendering the last reconcile, up to thirty seconds stale.
+        Asking costs 0.22ms, so ask often and treat the stream as a bonus.
+        """
+        try:
+            self.state.apply_agents(herdr.agents(self.socket_path))
+        except (OSError, herdr.HerdrError) as exc:
+            self._drop_herdr(now, str(exc))
+            return
+        self._next_status_poll = now + self.config.status_poll_seconds
+
     def _pump_herdr(self, now: float) -> None:
         if self.stream is None:
             return
@@ -322,6 +340,7 @@ class Daemon:
         if self.stream is None:
             candidates.append(self._herdr_backoff.wait_for(now))
         else:
+            candidates.append(max(0.0, self._next_status_poll - now))
             candidates.append(max(0.0, self._next_reconcile - now))
             if self._backlog_settling:
                 candidates.append(max(0.0, self._last_event_at + BACKLOG_QUIET_SECONDS - now))
@@ -339,6 +358,8 @@ class Daemon:
                 self._connect_herdr(now)
             if self.device is None and self._device_backoff.ready(now):
                 self._connect_device(now)
+            if self.stream is not None and now >= self._next_status_poll:
+                self._poll_status(now)
             if self.stream is not None and now >= self._next_reconcile:
                 try:
                     self._reconcile(now)

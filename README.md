@@ -87,7 +87,7 @@ already running `doctor` reports the port as in use rather than probing it.
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 87 tests, no keypad and no running Herdr required
+make test   # 105 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -130,6 +130,7 @@ socket_path = "~/.config/herdr/sessions/<name>/herdr.sock"
 
 ```toml
 settle_ms         = 300     # how long a state must hold before it lights up
+status_poll_ms    = 500     # how often to ask Herdr what every agent is doing
 provision         = true    # write firmware to an unprovisioned board
 reconcile_seconds = 30      # how often to re-sync against session.snapshot
 activate_terminal = true    # raise the terminal when focusing an agent
@@ -155,7 +156,8 @@ Keybow 2040 ──usb_cdc data, JSON lines──┐
                                         │
                                         ▼
                   ~/.config/herdr/herdr.sock, JSON lines
-                  events.subscribe (pushed) + agent.focus
+                  agent.list (polled, the status source)
+                  events.subscribe (pushed, a bonus) + agent.focus
 ```
 
 The board is deliberately dumb: it renders frames and reports presses. It holds
@@ -177,6 +179,11 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 - Herdr's event backlog is bounded, rate-limited, and not a complete history,
   which is why the daemon reconciles against `session.snapshot` rather than
   trusting the stream, and ignores replayed events entirely. See ADR 0002.
+- Colour does not wait on that stream at all. Measured against a live session,
+  it replays its backlog at ten events a second and then goes quiet -- 140
+  seconds, five real status changes, no events -- so agent status is polled with
+  `agent.list`, which costs 0.22ms a call. The stream is kept because it is
+  instant when it does deliver. See ADR 0005.
 - The daemon resends the current frame every two seconds even when nothing has
   changed. The board discards a frame older than six seconds and falls back to
   showing no host, so a dead daemon cannot leave stale agent states lit.

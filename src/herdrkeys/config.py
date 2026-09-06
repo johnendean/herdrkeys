@@ -15,6 +15,7 @@ STATE_PATH = state_dir() / "slots.json"
 @dataclass
 class Config:
     settle_seconds: float = 0.3
+    status_poll_seconds: float = 0.5
     reconcile_seconds: float = 30.0
     reconnect_min_seconds: float = 0.5
     reconnect_max_seconds: float = 15.0
@@ -42,6 +43,8 @@ class Config:
             return config
         if "settle_ms" in raw:
             config.settle_seconds = float(raw["settle_ms"]) / 1000.0
+        if "status_poll_ms" in raw:
+            config.status_poll_seconds = float(raw["status_poll_ms"]) / 1000.0
         if "reconcile_seconds" in raw:
             config.reconcile_seconds = float(raw["reconcile_seconds"])
         if "provision" in raw:

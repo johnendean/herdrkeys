@@ -7,9 +7,10 @@ Two things about Herdr's stream shape drive this design:
 * `events.subscribe` replays a backlog on connect, so events can arrive that are
   older than a snapshot taken afterwards. Every `pane_updated` carries a
   monotonic per-pane `revision`, so stale updates are discarded by revision.
-* There is no global `pane.agent_status_changed` subscription -- it requires a
-  specific `pane_id`. `pane_updated` is global and carries the whole pane object
-  including `agent` and `agent_status`, so that is the status source.
+* The stream cannot be trusted to keep arriving, so agent status is polled with
+  `agent.list` and folded by `apply_agents`. `pane_updated` carries the whole
+  pane object, status included, so events still count -- they just are not the
+  thing being waited on. See ADR 0005.
 """
 
 from __future__ import annotations
@@ -62,6 +63,44 @@ class HerdrState:
             record = _record_from_pane(pane)
             self.panes[record.pane_id] = record
         self.focused_pane_id = snapshot.get("focused_pane_id")
+
+    def apply_agents(self, rows: list[dict[str, Any]]) -> None:
+        """Fold a status poll: authoritative about state, silent about lifetime.
+
+        `agent.list` answers "which panes have an agent, and what is it doing",
+        so a pane it does not mention either has no agent or is not a pane at
+        all. Panes are therefore updated and released here, never forgotten --
+        forgetting stays with the snapshot and `pane_closed`, so a slot outlives
+        the agent that was in it (ADR 0002).
+        """
+        seen = set()
+        focused, unfocused = None, set()
+        for row in rows:
+            if not row.get("pane_id"):
+                continue
+            record = _record_from_pane(row)
+            seen.add(record.pane_id)
+            existing = self.panes.get(record.pane_id)
+            if existing is not None:
+                # Hold the high-water revision, so a `pane_updated` replayed
+                # after this poll cannot overwrite it through the guard below.
+                record = replace(record, revision=max(record.revision, existing.revision))
+            self.panes[record.pane_id] = record
+            if row.get("focused"):
+                focused = record.pane_id
+            else:
+                unfocused.add(record.pane_id)
+        if focused is not None:
+            self.focused_pane_id = focused
+        elif self.focused_pane_id in unfocused:
+            # Focus has moved to a pane with no agent. `agent.list` cannot say
+            # which one, but it can say it is no longer this one, and a key left
+            # bright is a key claiming focus it does not have.
+            self.focused_pane_id = None
+        for pane_id, record in list(self.panes.items()):
+            if record.is_agent_pane and pane_id not in seen:
+                # The agent left the pane; the pane itself survives.
+                self.panes[pane_id] = replace(record, agent=None, state=AgentState.UNKNOWN)
 
     def apply_event(self, event: dict[str, Any]) -> None:
         """Fold one event. Unknown or stale events are ignored."""
