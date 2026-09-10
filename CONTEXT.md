@@ -57,8 +57,13 @@ transition into `blocked` is never settled.
 only key that shows whether the daemon can see Herdr at all.
 
 **Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
-Wispr Flow dictates on. The frame says which key it is; the firmware decides
-which keystroke that means, exactly as it decides what `blocked` looks like.
+Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next
+tap. The frame says which key it is; the firmware decides which keystroke that
+means, exactly as it decides what `blocked` looks like.
+
+**Latch** — The microphone held open with no finger on the key. It pulses while
+latched, and ends on a second tap, on a five-minute timeout, or on anything that
+would otherwise release the key.
 
 **Daemon** — The host process. It is the only component that talks to Herdr, and
 the only component that decides anything; the keypad renders frames, reports key

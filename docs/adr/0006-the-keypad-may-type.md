@@ -46,9 +46,7 @@ Slot 12 is the microphone key, 15 stays the function key, 13 and 14 are spare.
 arithmetic over `len(AGENT_SLOTS)` and would order the queue wrongly if the agent
 slots had a hole in them.
 
-Hold to talk, not tap to toggle. A toggle means the board holds a modifier down
-between two presses, so every other keystroke in between becomes an Option chord,
-and a board reset mid-dictation leaves it held with nobody to release it.
+Hold to talk. Tap to latch -- see the amendment below.
 
 ## Consequences
 
@@ -82,3 +80,35 @@ The persisted slot map needs no migration: `SlotMap.load` already drops bindings
 to slots outside `AGENT_SLOTS`, so a pane parked on 12-14 quietly takes a new key
 on the next start. `STATE_VERSION` is deliberately **not** bumped, because that
 would discard every binding rather than the three that became invalid.
+
+## Amendment, 2026-09-10: tap to latch
+
+The first version of this decision was hold-only, on the grounds that a toggle
+leaves a modifier down between two presses and turns everything typed in between
+into an Option chord. Holding a key through a long dictation turns out to be the
+worse of the two, so a tap -- a press shorter than `LATCH_TAP_SECONDS` -- now
+latches the microphone open until the next tap.
+
+The original objection was not wrong, so it is answered rather than dropped:
+
+* **It is visible.** A latched key pulses; a held one is steady. Motion is
+  otherwise reserved for `blocked`, and this is the second thing to earn it: the
+  whole risk of a latch is forgetting it is on, and unlike an agent state it is
+  the user's own doing and ends the moment they act.
+* **It expires.** `LATCH_TIMEOUT` is five minutes. Nothing on the board can see
+  whether Flow is still listening, so a latch does not get to outlive its
+  usefulness by more than that.
+* **Everything that released a held key still releases a latched one**: a frame
+  that stops naming the key the microphone, and the host going quiet.
+
+What the board still cannot know is whether Flow is actually recording; it knows
+only what it is holding down. If Flow ends a dictation by itself, the key keeps
+pulsing until one of those releases fires. Reading Flow's own state on the host
+(`prefs.activeDictationSession` in its config) and putting it in the frame would
+close that gap, at the cost of the daemon polling another application's private
+file -- not worth it while the two can only disagree between Flow stopping and
+the next tap.
+
+The firmware's decisions are tested in `tests/test_firmware.py`, which executes
+the module body against stand-in CircuitPython libraries. A stuck modifier is the
+worst thing this board can do to a machine, so each way it lets go has a test.

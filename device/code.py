@@ -8,7 +8,8 @@ It does own the palette and the animation, because a frame carries meaning
 (`blocked`) rather than colour -- so what red looks like, and what blinks, is
 decided here and nowhere else. The same goes for the microphone key: the host
 says which key it is, this file says that holding it means holding Right Option,
-which is what Wispr Flow listens for.
+which is what Wispr Flow listens for, and that a tap latches it open until the
+next tap.
 
 Wire protocol, newline-delimited JSON on the usb_cdc data channel:
 
@@ -69,6 +70,21 @@ FN_IDLE = (34, 44, 34)      # function key, daemon connected
 # Green and blue are kept equal: at low duty an unbalanced pair reads as a tint.
 MIC_IDLE = (0, 26, 26)
 MIC_OPEN = (0, 160, 200)
+
+# A press shorter than this latches the microphone open instead of closing it
+# with your finger; anything longer is an ordinary hold. Long enough not to fire
+# on a deliberate short phrase, short enough that a tap never feels like a wait.
+LATCH_TAP_SECONDS = 0.4
+
+# A latched microphone breathes rather than sitting still, because the whole
+# risk of latching is forgetting it is on. Faster and smoother than the blink
+# `blocked` uses, so the two never read as the same signal.
+MIC_PULSE_SECONDS = 0.9
+
+# ...and it does not stay latched forever. Nothing on the board can tell whether
+# Wispr Flow is still listening, and a modifier held down for an afternoon turns
+# every keystroke into an Option chord.
+LATCH_TIMEOUT = 300.0
 FN_OFFLINE = (70, 0, 0)     # daemon cannot see Herdr; pulses
 FN_FLASH = (140, 140, 140)  # "heard you, nothing wants your attention"
 NO_HOST = (60, 0, 60)       # no daemon; blinks, so hue alone need not carry it
@@ -123,6 +139,9 @@ pressed_before = [False] * 16
 flash_until = 0.0
 buffer = ""
 mic_slot = None         # the slot holding the dictation key down, if any
+mic_pressed_at = 0.0    # when it went down, to tell a tap from a hold
+mic_latched = False     # held with no finger on it, until tapped again
+mic_latched_at = 0.0    # when the latch started, so it cannot run forever
 
 
 def clamp(value):
@@ -161,16 +180,37 @@ def release_mic():
     when the host goes quiet: a modifier held down by a board whose daemon has
     died would turn every later keystroke into an Option chord.
     """
-    global mic_slot
+    global mic_slot, mic_latched
     if mic_slot is None:
         return
     mic_slot = None
+    mic_latched = False
     if keyboard is None:
         return
     try:
         keyboard.release(DICTATION_KEY)
     except Exception:
         pass
+
+
+def mic_pressed(slot, now):
+    """A press on the microphone key: start talking, or end a latched session."""
+    global mic_pressed_at
+    if mic_latched and mic_slot == slot:
+        release_mic()
+        return
+    hold_mic(slot)
+    mic_pressed_at = now
+
+
+def mic_released(now):
+    """A release: a tap latches the microphone open, a hold ends there."""
+    global mic_latched, mic_latched_at
+    if now - mic_pressed_at < LATCH_TAP_SECONDS:
+        mic_latched = True
+        mic_latched_at = now
+        return
+    release_mic()
 
 
 def colour_for(code, now, slot):
@@ -182,7 +222,13 @@ def colour_for(code, now, slot):
             return FN_FLASH
         return FN_IDLE
     if code == MIC_CODE:
-        return MIC_OPEN if slot == mic_slot else MIC_IDLE
+        if slot != mic_slot:
+            return MIC_IDLE
+        if not mic_latched:
+            return MIC_OPEN
+        phase = (now % MIC_PULSE_SECONDS) / MIC_PULSE_SECONDS
+        ramp = 1.0 - abs(phase * 2.0 - 1.0)
+        return scaled(MIC_OPEN, 0.3 + 0.7 * ramp)
     if code == "x":
         # Slow pulse: distinguishes "not connected" from "no agents", which
         # would otherwise both be sixteen dark keys.
@@ -202,6 +248,8 @@ def colour_for(code, now, slot):
 def paint(now):
     stale = frame is None or (now - frame_at) > HOST_TIMEOUT
     if mic_slot is not None and (stale or frame[mic_slot] != MIC_CODE):
+        release_mic()
+    elif mic_latched and now - mic_latched_at > LATCH_TIMEOUT:
         release_mic()
     # A slow blink rather than a steady colour: whether a hue reads as intended
     # depends on the LED, but motion does not, and this must never be mistaken
@@ -268,9 +316,9 @@ while True:
             # Every key reports its press; only this one also types. The host
             # ignores presses on keys it holds no agent for.
             if frame is not None and (now - frame_at) <= HOST_TIMEOUT and frame[slot] == MIC_CODE:
-                hold_mic(slot)
+                mic_pressed(slot, now)
         elif pressed_before[key] and not is_pressed and mic_slot == slot:
-            release_mic()
+            mic_released(now)
         pressed_before[key] = is_pressed
 
     paint(now)

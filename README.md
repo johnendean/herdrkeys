@@ -41,12 +41,20 @@ It is also the only key that shows whether the daemon can see Herdr at all --
 dark keys otherwise mean "no agents", which is not the same thing.
 
 The **microphone key** (slot 12) is the other. Hold it to dictate with Wispr
-Flow: the keypad holds Right Option down for as long as
-your finger is down, which is what Flow's push-to-talk listens for, and lets go
-when you do. It lights bright cyan while the microphone is open. The keystroke
-comes from the board itself rather than from the daemon, so it needs no
-Accessibility permission -- but the daemon is what tells the board which key it
-is, so a keypad showing "no host" will not dictate either.
+Flow: the keypad holds Right Option down for as long as your finger is down,
+which is what Flow's push-to-talk listens for, and lets go when you do. **Tap it
+instead and the microphone latches open** until you tap again -- for anything
+longer than a sentence, or when you would rather not hold a key down.
+
+Steady bright cyan means held; a **pulsing** cyan means latched, because the only
+real risk of latching is forgetting it is on. A latch also gives up on its own
+after five minutes: nothing on the board can tell whether Flow is still
+listening, and a modifier held down all afternoon would turn every keystroke into
+an Option chord.
+
+The keystroke comes from the board itself rather than from the daemon, so it
+needs no Accessibility permission -- but the daemon is what tells the board which
+key it is, so a keypad showing "no host" will not dictate either.
 
 Slots 13 and 14 are spare and stay dark.
 
@@ -99,7 +107,7 @@ already running `doctor` reports the port as in use rather than probing it.
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 117 tests, no keypad and no running Herdr required
+make test   # 126 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -196,9 +204,10 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
   seconds, five real status changes, no events -- so agent status is polled with
   `agent.list`, which costs 0.22ms a call. The stream is kept because it is
   instant when it does deliver. See ADR 0005.
-- The keypad types exactly one keystroke, Right Option, and only while the
-  microphone key is held. It is released on the key coming up, on a frame that
-  stops naming that key the microphone, and on the host going quiet -- a
+- The keypad types exactly one keystroke, Right Option, and only for the
+  microphone key. It is released on the key coming up, on a second tap when
+  latched, five minutes into a latch, on a frame that stops naming that key the
+  microphone, and on the host going quiet -- a
   modifier left held down by a dead daemon would turn every later keystroke into
   an Option chord. If `adafruit_hid` is missing from the board's `lib/`, the grid
   still works and dictation quietly does not. See ADR 0006.
