@@ -1,4 +1,4 @@
-from herdrkeys.model import FN_SLOT
+from herdrkeys.model import FEATURE_SLOTS
 from herdrkeys.slots import SlotMap
 
 
@@ -18,12 +18,13 @@ def test_freed_slot_is_reused_but_survivors_do_not_shift():
     assert slots.assign("d") == 1
 
 
-def test_function_key_is_never_assigned():
+def test_the_feature_row_is_never_assigned():
     slots = SlotMap()
     assigned = [slots.assign(f"pane{i}") for i in range(20)]
-    assert FN_SLOT not in assigned
-    assert assigned[-1] is None, "the grid fills up rather than overflowing onto the fn key"
-    assert sorted(s for s in assigned if s is not None) == list(range(15))
+    for slot in FEATURE_SLOTS:
+        assert slot not in assigned
+    assert assigned[-1] is None, "the grid fills up rather than overflowing onto the feature row"
+    assert sorted(s for s in assigned if s is not None) == list(range(12))
 
 
 def test_gc_drops_only_dead_panes():

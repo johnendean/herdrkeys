@@ -1,7 +1,7 @@
 import json
 
 from herdrkeys.device import FakeDevice, decode_presses, encode_flash, encode_frame, encode_hello
-from herdrkeys.model import PROTOCOL_VERSION, Frame
+from herdrkeys.model import MIC, MIC_SLOT, PROTOCOL_VERSION, Frame
 
 
 def test_frames_are_absolute_so_a_dropped_byte_self_heals():
@@ -46,3 +46,9 @@ def test_fake_device_records_what_the_daemon_would_have_shown():
     assert device.flashes == 1
     assert device.read_presses() == [4]
     assert device.read_presses() == [], "presses are consumed once"
+
+
+def test_a_blank_frame_still_carries_the_feature_row():
+    frame = Frame.blank(connected=True)
+    assert frame.keys[MIC_SLOT] == MIC
+    assert frame.keys.endswith("f")

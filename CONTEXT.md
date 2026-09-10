@@ -33,8 +33,12 @@ but unclassifiable — it does not mean the agent finished.
 eligible for a slot; plain shell panes are not represented on the keypad.
 
 **Slot** — One of the keypad's 16 physical keys, together with the pane bound to
-it. Slots 0–14 hold agent panes. Slot 15 is the **function key** and never holds
-one.
+it. Slots 0–11 hold agent panes. Slots 12–15 are the **feature row** and never
+hold one.
+
+**Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
+key**, 15 the **function key**, and 13 and 14 are spare. Which row this is
+physically depends on how the board is turned, which only the device knows.
 
 **Slot map** — The binding from slot to pane. A pane claims the lowest free slot
 when it first becomes an agent pane and holds that slot until the pane closes —
@@ -52,6 +56,15 @@ transition into `blocked` is never settled.
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the
 only key that shows whether the daemon can see Herdr at all.
 
+**Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
+Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next
+tap. The frame says which key it is; the firmware decides which keystroke that
+means, exactly as it decides what `blocked` looks like.
+
+**Latch** — The microphone held open with no finger on the key. It pulses while
+latched, and ends on a second tap, on a five-minute timeout, or on anything that
+would otherwise release the key.
+
 **Daemon** — The host process. It is the only component that talks to Herdr, and
-the only component that decides anything; the keypad renders frames and reports
-key presses.
+the only component that decides anything; the keypad renders frames, reports key
+presses, and types the one keystroke the microphone key stands for.

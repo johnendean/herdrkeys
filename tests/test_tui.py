@@ -2,8 +2,8 @@
 
 import re
 
-from herdrkeys.model import Frame
-from herdrkeys.tui import draw
+from herdrkeys.model import EMPTY, FN_CONNECTED, FN_DISCONNECTED, MIC, AgentState, Frame, state_code
+from herdrkeys.tui import SWATCH, draw
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 CELL = re.compile(r"\[\s*(\d+) ")
@@ -87,3 +87,13 @@ def test_the_device_declares_a_rotation_the_math_supports():
     match = re.search(r"^ROTATION = (\d+)", source, re.M)
     assert match, "device/code.py must declare ROTATION"
     assert int(match.group(1)) in (0, 90, 180, 270)
+
+
+def test_every_character_a_frame_can_carry_has_a_swatch():
+    # The TUI is the only place a frame is read by a human, so a character it
+    # cannot colour is a character nobody can see is wrong.
+    codes = {EMPTY, FN_CONNECTED, FN_DISCONNECTED, MIC}
+    for state in AgentState:
+        codes.add(state_code(state, focused=False))
+        codes.add(state_code(state, focused=True))
+    assert codes <= set(SWATCH), f"no swatch for {sorted(codes - set(SWATCH))}"

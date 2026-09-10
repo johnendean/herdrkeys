@@ -7,7 +7,7 @@ from herdrkeys import daemon as daemon_module
 from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
 from herdrkeys.device import FakeDevice
-from herdrkeys.model import FN_SLOT, AgentState
+from herdrkeys.model import FEATURE_SLOTS, FN_SLOT, MIC_SLOT, AgentState
 
 
 @pytest.fixture
@@ -78,6 +78,25 @@ def test_activation_can_be_switched_off(rig):
     load(instance, [agent_pane("w1:p1", "idle")], "w1:p1")
     instance.handle_press(0)
     assert focused == ["w1:p1"] and activated == []
+
+
+def test_pressing_the_mic_key_does_nothing_on_the_host(rig):
+    # The keystroke is the board's job. The host must not focus an agent, must
+    # not flash "nothing wants you", and must not care that the press happened.
+    instance, device, focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
+
+    instance.handle_press(MIC_SLOT)
+    assert focused == [] and device.flashes == 0
+
+
+def test_no_feature_key_can_focus_an_agent(rig):
+    instance, _device, focused, _ = rig
+    load(instance, [agent_pane(f"w{i}:p1", "idle") for i in range(1, 13)], "w1:p1")
+    for slot in FEATURE_SLOTS:
+        if slot != FN_SLOT:
+            instance.handle_press(slot)
+    assert focused == []
 
 
 def test_the_slot_map_survives_a_restart(rig, tmp_path):
@@ -288,6 +307,40 @@ def test_a_busy_session_still_lights_up_eventually(rig, monkeypatch):
 
     assert not instance._backlog_done(100.5), "still arriving, deadline not reached"
     assert instance._backlog_done(100.0 + daemon_module.BACKLOG_MAX_SECONDS)
+
+
+def test_a_stale_descriptor_drops_the_keypad_rather_than_the_daemon(rig, monkeypatch):
+    # kqueue refuses a descriptor that has gone stale -- the keypad unplugged, or
+    # re-enumerated by a deploy -- with EINVAL, at registration rather than at
+    # read time. Uncaught, that killed a daemon documented as never exiting
+    # voluntarily, and the keypad stayed dark until someone noticed.
+    instance, device, _focused, _ = rig
+
+    class Stop(Exception):
+        """Ends run_forever from the clock, since nothing else ever does."""
+
+    def stale_fileno():
+        raise OSError(22, "Invalid argument")
+
+    device.fileno = stale_fileno
+    instance._herdr_backoff = Backoff(0.0, 0.0)
+    instance._device_backoff = Backoff(0.0, 0.0)
+    monkeypatch.setattr(daemon_module.herdr, "EventStream", lambda path, **kw: (_ for _ in ()).throw(OSError("no herdr")))
+
+    ticks = iter([0.0, 0.01, 0.02, 0.03])
+
+    def clock():
+        try:
+            return next(ticks)
+        except StopIteration:
+            raise Stop
+
+    instance.clock = clock
+    with pytest.raises(Stop):
+        instance.run_forever()
+
+    assert instance.device is None, "the keypad was dropped; the daemon kept running"
+    assert device.closed
 
 
 # -- status polling ------------------------------------------------------
