@@ -1,5 +1,7 @@
 # herdrkeys
 
+[![CI](https://github.com/johnendean/herdrkeys/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/johnendean/herdrkeys/actions/workflows/ci.yml?query=branch%3Amain)
+
 Bind a [Pimoroni Keybow 2040](https://shop.pimoroni.com/products/keybow-2040) to
 a running [Herdr](https://herdr.dev) session. The LEDs show what every agent is
 doing; the keys jump to them.
