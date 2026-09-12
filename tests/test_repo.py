@@ -6,7 +6,7 @@ string work, so it is tested exhaustively here rather than through a daemon.
 
 import pytest
 
-from herdrkeys.repo import page_for, web_url
+from herdrkeys.repo import has_page, page_for, remote_from_config, web_url
 
 
 @pytest.mark.parametrize(
@@ -113,3 +113,125 @@ def test_a_real_repository_resolves_end_to_end():
     url = page_for(".")
     assert url is not None and url.startswith("https://")
     assert url.endswith("/herdrkeys")
+
+
+# -- reading the remote without running git -------------------------------
+
+
+def make_repo(root, config_text):
+    """A checkout as far as this code is concerned: a .git dir with a config."""
+    git_dir = root / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "config").write_text(config_text)
+    return root
+
+
+PLAIN = """\
+[core]
+\trepositoryformatversion = 0
+[remote "origin"]
+\turl = git@github.com:johnendean/herdrkeys.git
+\tfetch = +refs/heads/*:refs/remotes/origin/*
+[branch "main"]
+\tremote = origin
+"""
+
+
+def test_the_remote_is_read_straight_out_of_the_config(tmp_path):
+    make_repo(tmp_path, PLAIN)
+    assert remote_from_config(str(tmp_path)) == "git@github.com:johnendean/herdrkeys.git"
+
+
+def test_tab_indented_keys_are_read(tmp_path):
+    # The reason this is hand-parsed: configparser reads git's tab indentation
+    # as line continuations and returns nothing useful.
+    make_repo(tmp_path, PLAIN)
+    assert has_page(str(tmp_path))
+
+
+def test_a_percent_in_a_url_is_not_interpolation(tmp_path):
+    # The other reason: configparser would try to expand this and raise.
+    make_repo(tmp_path, '[remote "origin"]\n\turl = https://host/o/r%20x.git\n')
+    assert remote_from_config(str(tmp_path)) == "https://host/o/r%20x.git"
+
+
+def test_a_subdirectory_finds_the_repository_above_it(tmp_path):
+    make_repo(tmp_path, PLAIN)
+    deep = tmp_path / "src" / "herdrkeys"
+    deep.mkdir(parents=True)
+    assert has_page(str(deep)), "an agent is rarely sitting in the repository root"
+
+
+def test_comments_and_other_remotes_are_not_mistaken_for_origin(tmp_path):
+    make_repo(
+        tmp_path,
+        '# url = https://wrong/one.git\n'
+        '[remote "upstream"]\n\turl = git@github.com:someone/else.git\n'
+        '[remote "origin"]\n\turl = git@github.com:right/one.git\n',
+    )
+    assert remote_from_config(str(tmp_path)) == "git@github.com:right/one.git"
+
+
+def test_a_repository_with_no_origin_has_no_page(tmp_path):
+    make_repo(tmp_path, '[remote "upstream"]\n\turl = git@github.com:someone/else.git\n')
+    assert remote_from_config(str(tmp_path)) is None
+
+
+def test_a_worktree_finds_the_config_it_shares(tmp_path):
+    # Herdr creates worktrees itself, so `.git` being a file rather than a
+    # directory is ordinary here and must not read as "not a repository".
+    main = make_repo(tmp_path / "main", PLAIN)
+    worktree_git = main / ".git" / "worktrees" / "feature"
+    worktree_git.mkdir(parents=True)
+    (worktree_git / "commondir").write_text("../..\n")
+
+    checkout = tmp_path / "feature"
+    checkout.mkdir()
+    (checkout / ".git").write_text(f"gitdir: {worktree_git}\n")
+
+    assert has_page(str(checkout))
+    assert remote_from_config(str(checkout)) == "git@github.com:johnendean/herdrkeys.git"
+
+
+def test_a_directory_outside_any_repository_reads_as_no_page(tmp_path):
+    assert remote_from_config(str(tmp_path)) is None
+    assert has_page(str(tmp_path)) is False
+
+
+def test_no_directory_at_all_reads_as_no_page():
+    assert remote_from_config(None) is None
+    assert has_page(None) is False
+
+
+def test_the_colour_never_promises_more_than_a_press_delivers(tmp_path):
+    # The invariant that matters. has_page reads only the config file, so it
+    # may say no where a press finds something -- but it must never say yes
+    # where a press finds nothing, which would be a key that lies.
+    make_repo(tmp_path, PLAIN)
+    assert has_page(str(tmp_path)) is True
+    assert page_for(str(tmp_path)) is not None
+
+
+def test_git_is_asked_only_when_the_config_says_nothing(tmp_path, monkeypatch):
+    # The config parser understands plain remotes and nothing else. Rather than
+    # grow it into a git implementation, a press falls through to git, so the
+    # key is never less capable than it was before it had a colour.
+    import herdrkeys.repo as repo_module
+
+    asked = []
+    monkeypatch.setattr(
+        repo_module,
+        "remote_url",
+        lambda cwd, **kw: asked.append(cwd) or "git@github.com:fallback/found.git",
+    )
+
+    inside = make_repo(tmp_path / "checkout", PLAIN)
+    assert page_for(str(inside)) == "https://github.com/johnendean/herdrkeys"
+    assert asked == [], "the config answered, so git was not run"
+
+    # A sibling of the checkout, not a child: a child would walk up and find
+    # the repository above it, which is the whole point of the walk.
+    bare = tmp_path / "elsewhere"
+    bare.mkdir()
+    assert page_for(str(bare)) == "https://github.com/fallback/found"
+    assert asked == [str(bare)], "the config said nothing, so git was asked"

@@ -71,12 +71,18 @@ FN_IDLE = (34, 44, 34)      # function key, daemon connected
 MIC_IDLE = (0, 26, 26)
 MIC_OPEN = (0, 160, 200)
 
-# The repository key. Violet is unused by every agent state and by the mic, and
-# it is steady: the host cannot know whether there is a page to open without
-# running git on every frame, so this key promises only that the daemon is
-# listening. A press that finds nothing flashes, as the function key does.
-REPO_CODE = "r"
+# The repository key, in its two states. Violet is unused by every agent state
+# and by the microphone. Both states are lit: dark would be indistinguishable
+# from the spare key beside it, and from a board with no daemon behind it.
+#
+# Brightness rather than hue separates them, because the difference is one of
+# degree -- there is a page, or there is not -- and because a second hue here
+# would start competing with the agent states for meaning. Steady in both: the
+# key never animates, so motion stays reserved for `blocked` and the mic latch.
+REPO_CODE = "r"          # the focused agent's directory has a page
+REPO_NONE_CODE = "n"     # ...and this one does not
 REPO_IDLE = (45, 0, 70)
+REPO_NONE = (7, 0, 11)
 
 # A press shorter than this latches the microphone open instead of closing it
 # with your finger; anything longer is an ordinary hold. Long enough not to fire
@@ -229,10 +235,10 @@ def colour_for(code, now, slot):
         if now < flash_until and flash_slot in (None, slot):
             return FN_FLASH
         return FN_IDLE
-    if code == REPO_CODE:
+    if code == REPO_CODE or code == REPO_NONE_CODE:
         if now < flash_until and flash_slot == slot:
             return FN_FLASH
-        return REPO_IDLE
+        return REPO_IDLE if code == REPO_CODE else REPO_NONE
     if code == MIC_CODE:
         if slot != mic_slot:
             return MIC_IDLE

@@ -7,7 +7,8 @@ from herdrkeys.model import (
     FN_DISCONNECTED,
     MIC,
     MIC_SLOT,
-    REPO,
+    REPO_NO_PAGE,
+    REPO_PAGE,
     REPO_SLOT,
     AgentPane,
     AgentState,
@@ -39,7 +40,7 @@ def test_frame_is_one_character_per_key():
     panes = {"a": pane("a", AgentState.WORKING)}
     slots = SlotMap({0: "a"})
     frame = render(panes, slots, settled(*panes.values()), connected=True)
-    assert frame.keys == "w" + EMPTY * 11 + MIC + REPO + EMPTY + FN_CONNECTED
+    assert frame.keys == "w" + EMPTY * 11 + MIC + REPO_NO_PAGE + EMPTY + FN_CONNECTED
 
 
 def test_focus_is_shown_by_case_not_by_a_different_state():
@@ -180,10 +181,17 @@ def test_the_feature_row_is_in_every_frame():
         assert frame.keys[14] == EMPTY, "14 is the last spare, and dark"
 
 
-def test_the_repo_key_is_lit_whenever_the_daemon_is():
-    # It cannot know whether there is a page to open without running git on
-    # every frame, so it promises only that something is listening. A press
-    # that finds nothing flashes instead.
+def test_the_repo_key_says_whether_there_is_a_page():
     for connected in (True, False):
-        frame = render({}, SlotMap(), Settler(), connected=connected)
-        assert frame.keys[REPO_SLOT] == REPO
+        with_page = render({}, SlotMap(), Settler(), connected=connected, repo_page=True)
+        without = render({}, SlotMap(), Settler(), connected=connected, repo_page=False)
+        assert with_page.keys[REPO_SLOT] == REPO_PAGE
+        assert without.keys[REPO_SLOT] == REPO_NO_PAGE
+
+
+def test_the_repo_key_is_never_dark():
+    # Dark would be indistinguishable from the spare key beside it, and from a
+    # board with nothing behind it. "No page here" is a state, not an absence.
+    for repo_page in (True, False):
+        frame = render({}, SlotMap(), Settler(), connected=True, repo_page=repo_page)
+        assert frame.keys[REPO_SLOT] != EMPTY

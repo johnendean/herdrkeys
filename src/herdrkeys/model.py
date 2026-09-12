@@ -38,10 +38,11 @@ EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
 MIC = "m"  # the device decides what a microphone key emits, and what it looks like
-# Steady whenever the daemon is connected, whether or not the focused agent is
-# in a repository. Knowing that in advance would mean running git on the render
-# path; a press that finds nothing flashes instead, as the function key does.
-REPO = "r"
+# The repo key, in its two states: the focused agent's directory has a page, or
+# it does not. Both are lit -- dark would be indistinguishable from the spare
+# key beside it -- and the device decides how far apart they look.
+REPO_PAGE = "r"
+REPO_NO_PAGE = "n"
 
 _STATE_CODE = {
     AgentState.IDLE: "i",
@@ -57,7 +58,7 @@ def state_code(state: AgentState, *, focused: bool) -> str:
     return code.upper() if focused else code
 
 
-def feature_keys(*, connected: bool) -> list[str]:
+def feature_keys(*, connected: bool, repo_page: bool = False) -> list[str]:
     """An empty frame with the feature row already filled in.
 
     One place decides what the non-agent keys show, so a frame and a blank frame
@@ -65,7 +66,7 @@ def feature_keys(*, connected: bool) -> list[str]:
     """
     keys = [EMPTY] * SLOT_COUNT
     keys[MIC_SLOT] = MIC
-    keys[REPO_SLOT] = REPO
+    keys[REPO_SLOT] = REPO_PAGE if repo_page else REPO_NO_PAGE
     keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return keys
 
@@ -94,5 +95,5 @@ class Frame:
             raise ValueError(f"frame must be {SLOT_COUNT} chars, got {len(self.keys)!r}")
 
     @classmethod
-    def blank(cls, *, connected: bool) -> Frame:
-        return cls("".join(feature_keys(connected=connected)))
+    def blank(cls, *, connected: bool, repo_page: bool = False) -> Frame:
+        return cls("".join(feature_keys(connected=connected, repo_page=repo_page)))

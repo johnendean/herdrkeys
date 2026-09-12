@@ -107,13 +107,13 @@ def test_end_to_end_from_recording_to_frame():
     for pane_id, pane in panes.items():
         settler.observe(pane_id, pane.state, 0.0)
     settler.tick(0.0)
-    assert render(panes, slots, settler, connected=True).keys == "-" * 12 + "mr-f", (
+    assert render(panes, slots, settler, connected=True).keys == "-" * 12 + "mn-f", (
         "nothing has settled yet, so the grid is still dark"
     )
 
     settler.tick(1.0)
     frame = render(panes, slots, settler, connected=True)
-    assert frame.keys == "wW" + "-" * 10 + "mr-f", (
+    assert frame.keys == "wW" + "-" * 10 + "mn-f", (
         "w1:p1 working in slot 0, w2:p1 working and focused in slot 1"
     )
     assert state.agent_panes()["w2:p1"].state is AgentState.WORKING

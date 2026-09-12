@@ -7,7 +7,15 @@ from herdrkeys import daemon as daemon_module
 from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
 from herdrkeys.device import FakeDevice
-from herdrkeys.model import FEATURE_SLOTS, FN_SLOT, MIC_SLOT, REPO_SLOT, AgentState
+from herdrkeys.model import (
+    FEATURE_SLOTS,
+    FN_SLOT,
+    MIC_SLOT,
+    REPO_NO_PAGE,
+    REPO_PAGE,
+    REPO_SLOT,
+    AgentState,
+)
 
 
 @pytest.fixture
@@ -684,3 +692,46 @@ def test_git_is_never_run_while_rendering(repo_rig):
         instance.render(float(tick))
 
     assert asked == [], "rendering must not ask git anything"
+
+
+def test_the_frame_says_whether_the_focused_agent_has_a_page(rig, monkeypatch):
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(
+        daemon_module.repo_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+    )
+
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+    assert instance.render(2.0).keys[REPO_SLOT] == REPO_PAGE
+
+    load(instance, [repo_pane("w1:p1", "/elsewhere", focused=True)], "w1:p1")
+    assert instance.render(4.0).keys[REPO_SLOT] == REPO_NO_PAGE
+
+
+def test_the_frame_follows_focus_between_repositories(rig, monkeypatch):
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(
+        daemon_module.repo_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+    )
+    panes = [repo_pane("w1:p1", "/elsewhere", focused=True), repo_pane("w2:p1", "/code/herdrkeys")]
+
+    load(instance, panes, "w1:p1")
+    assert instance.render(2.0).keys[REPO_SLOT] == REPO_NO_PAGE
+
+    instance.state.focused_pane_id = "w2:p1"
+    assert instance.render(3.0).keys[REPO_SLOT] == REPO_PAGE
+
+
+def test_rendering_spawns_no_process(rig, monkeypatch):
+    # The whole reason the colour is read from .git/config: render runs on
+    # every pass of the loop, at least twice a second. A subprocess here would
+    # sit between every status poll and the LEDs -- 14.2ms against 0.055ms --
+    # and a git that hangs would freeze all sixteen keys, not just this one.
+    def forbidden(*args, **kwargs):
+        raise AssertionError("rendering must not spawn a process")
+
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(daemon_module.repo_module.subprocess, "run", forbidden)
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    for tick in range(10):
+        instance.render(float(tick))

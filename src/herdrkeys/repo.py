@@ -13,8 +13,10 @@ silently does nothing the first time it meets another.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+from pathlib import Path
 
 # git@host:owner/repo -- the scp-like syntax, which is not a URL and so cannot
 # be parsed as one. The path is everything after the colon.
@@ -76,6 +78,123 @@ def _tidy_path(path: str) -> str:
     return path.rstrip("/")
 
 
+# -- reading the remote without running git --------------------------------
+#
+# `git remote get-url` costs 14ms; reading `.git/config` costs 0.02ms. That
+# ratio is what decides where each is used. The key's colour is recomputed on
+# every frame, so it reads the file; a key press can afford the subprocess.
+
+
+def _git_dir(cwd: str) -> Path | None:
+    """The `.git` directory governing a path, or None outside a checkout."""
+    try:
+        start = Path(cwd).resolve()
+    except (OSError, ValueError):
+        return None
+    for directory in (start, *start.parents):
+        candidate = directory / ".git"
+        try:
+            if candidate.is_dir():
+                return candidate
+            if candidate.is_file():
+                # A worktree or a submodule: `.git` is a file naming the real
+                # directory. Both are ordinary here -- Herdr creates worktrees
+                # itself -- so neither can be treated as "not a repository".
+                return _gitdir_from_file(candidate)
+        except OSError:
+            return None
+    return None
+
+
+def _gitdir_from_file(path: Path) -> Path | None:
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("gitdir:"):
+            target = line.split(":", 1)[1].strip()
+            if not target:
+                return None
+            return Path(target) if os.path.isabs(target) else (path.parent / target)
+    return None
+
+
+def _config_path(git_dir: Path) -> Path:
+    """Where a git directory keeps its config.
+
+    A worktree's own directory holds no config: it points at the repository
+    they share through `commondir`, and that is where the remotes live.
+    """
+    commondir = git_dir / "commondir"
+    try:
+        if commondir.is_file():
+            target = commondir.read_text().strip()
+            if target:
+                common = Path(target) if os.path.isabs(target) else (git_dir / target)
+                return common / "config"
+    except OSError:
+        pass
+    return git_dir / "config"
+
+
+def _remote_in(text: str, remote: str) -> str | None:
+    """Pull one remote's url out of a git config file.
+
+    Hand-rolled rather than `configparser`, which mis-reads this format twice
+    over: git indents its keys with tabs, which configparser treats as line
+    continuations, and a `%` in a URL trips its interpolation.
+    """
+    wanted = f'remote "{remote}"'
+    section = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != wanted or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip().lower() == "url":
+            return value.strip() or None
+    return None
+
+
+def remote_from_config(cwd: str | None, *, remote: str = "origin") -> str | None:
+    """A directory's remote, read from `.git/config`. No subprocess.
+
+    Understands plain configuration and nothing more: git's `include.path` and
+    `url.<base>.insteadOf` are not followed. That is a deliberate floor, not an
+    oversight -- see `page_for`, which asks git itself before concluding there
+    is nothing here.
+    """
+    if not cwd:
+        return None
+    git_dir = _git_dir(cwd)
+    if git_dir is None:
+        return None
+    try:
+        text = _config_path(git_dir).read_text()
+    except OSError:
+        return None
+    return _remote_in(text, remote)
+
+
+def has_page(cwd: str | None, *, remote: str = "origin") -> bool:
+    """Whether this directory looks like it has a page, cheaply enough to ask
+    on every frame.
+
+    Answers from the config file alone. It can therefore say no where a press
+    would find something, and the key under-promises rather than over-promises:
+    a dark key that turns out to work is a much smaller betrayal than a lit key
+    that does nothing.
+    """
+    return web_url(remote_from_config(cwd, remote=remote)) is not None
+
+
 def remote_url(cwd: str, *, remote: str = "origin", timeout: float = 5.0) -> str | None:
     """The URL of a directory's remote, or None if there isn't one.
 
@@ -97,10 +216,20 @@ def remote_url(cwd: str, *, remote: str = "origin", timeout: float = 5.0) -> str
 
 
 def page_for(cwd: str | None, *, remote: str = "origin", timeout: float = 5.0) -> str | None:
-    """The page to open for a directory, or None if there is not one."""
+    """The page to open for a directory, or None if there is not one.
+
+    The config file first, because it is free and is what the key's colour was
+    decided from, so the two agree in every ordinary case. git itself only when
+    that finds nothing: it understands includes and `insteadOf` rewrites that
+    the parser does not, and 14ms is nothing on a key press. Pressing must
+    never be less capable than it was before the key had a colour.
+    """
     if not cwd:
         return None
-    return web_url(remote_url(cwd, remote=remote, timeout=timeout))
+    found = remote_from_config(cwd, remote=remote)
+    if found is None:
+        found = remote_url(cwd, remote=remote, timeout=timeout)
+    return web_url(found)
 
 
 def open_url(url: str, *, timeout: float = 5.0) -> None:

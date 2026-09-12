@@ -65,11 +65,21 @@ GitLab, Bitbucket, a forge of your own -- because the rewrite from `git@host:o/r
 to `https://host/o/r` is the same everywhere; there is no list of supported
 hosts to be missing from.
 
-It is lit whenever the daemon is running, and does not claim there is a page to
-open. Knowing that in advance would mean running git on every frame, to answer a
-question nobody asks until a finger lands on the key. So a press that finds no
-repository, no `origin`, or a remote that is only a local path flashes *that*
-key, the way the function key flashes when nothing wants you.
+**Bright violet means there is a page; dim violet means there is not** -- so you
+know before you press, and the key is never dark, which would read as the spare
+key beside it. It changes as you move between agents.
+
+That colour is read straight out of `.git/config` rather than by running git:
+the frame is rebuilt on every pass of the loop, at least twice a second, and
+`git remote get-url` costs 14.2ms against 0.055ms for the file. A subprocess
+there would sit between every status poll and the LEDs, and a git that hung
+would freeze all sixteen keys rather than just this one.
+
+Reading the file understands plain remotes and not git's `include.path` or
+`insteadOf` rewrites, so a press falls through to git itself when the file says
+nothing. The key therefore under-promises rather than over-promises: it can be
+dim somewhere that still opens. A press that genuinely finds nothing flashes
+*that* key, the way the function key flashes when nothing wants you.
 
 Slot 14 is spare and stays dark.
 

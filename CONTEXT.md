@@ -60,12 +60,14 @@ only key that shows whether the daemon can see Herdr at all.
 
 **Repo key** — Slot 13. Opens the repository of whichever agent is focused,
 in a browser. It follows focus rather than holding a repository of its own, so
-what it opens changes as you move around. Lit whenever the daemon is running:
-it does not claim there is a page to open, only that something is listening.
+what it opens changes as you move around, and it shows whether the agent it is
+following has a **page** before you press it. Never dark: "no page here" is a
+state it reports, not an absence.
 
 **Page** — The web address a repository's remote names. A remote that names no
-host — a local clone, a path — has no page, and a repo key press that finds
-none is answered with a flash rather than treated as a failure.
+host — a local clone, a path — has no page, and neither does a directory
+outside a repository. A press that finds none is answered with a flash rather
+than treated as a failure.
 
 **Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
 Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next
