@@ -37,8 +37,10 @@ it. Slots 0–11 hold agent panes. Slots 12–15 are the **feature row** and nev
 hold one.
 
 **Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
-key**, 15 the **function key**, and 13 and 14 are spare. Which row this is
-physically depends on how the board is turned, which only the device knows.
+key**, 13 the **repo key**, 15 the **function key**, and 14 is spare. Which row
+this is physically depends on how the board is turned, which only the device
+knows. There is no "function row": the row is the feature row, and the function
+key is one key in it.
 
 **Slot map** — The binding from slot to pane. A pane claims the lowest free slot
 when it first becomes an agent pane and holds that slot until the pane closes —
@@ -55,6 +57,17 @@ transition into `blocked` is never settled.
 
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the
 only key that shows whether the daemon can see Herdr at all.
+
+**Repo key** — Slot 13. Opens the repository of whichever agent is focused,
+in a browser. It follows focus rather than holding a repository of its own, so
+what it opens changes as you move around, and it shows whether the agent it is
+following has a **page** before you press it. Never dark: "no page here" is a
+state it reports, not an absence.
+
+**Page** — The web address a repository's remote names. A remote that names no
+host — a local clone, a path — has no page, and neither does a directory
+outside a repository. A press that finds none is answered with a flash rather
+than treated as a failure.
 
 **Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
 Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next

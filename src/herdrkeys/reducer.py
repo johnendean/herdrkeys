@@ -29,8 +29,15 @@ def render(
     settler: Settler,
     *,
     connected: bool,
+    repo_page: bool = False,
 ) -> Frame:
-    keys = feature_keys(connected=connected)
+    """`repo_page` is passed in rather than worked out here.
+
+    Deciding it means touching the filesystem, and this module stays pure: it
+    is the one place every interesting decision can be tested without a running
+    Herdr, a keypad, or a checkout on disk.
+    """
+    keys = feature_keys(connected=connected, repo_page=repo_page)
     for slot in AGENT_SLOTS:
         pane_id = slots.pane_at(slot)
         if pane_id is None:

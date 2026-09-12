@@ -11,12 +11,13 @@ lets go are tested one by one.
 """
 
 import sys
+import time
 import types
 from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import MIC
+from herdrkeys.model import MIC, REPO_NO_PAGE, REPO_PAGE, REPO_SLOT
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 
@@ -213,3 +214,80 @@ def test_a_board_with_no_hid_library_still_lights_up(monkeypatch):
     fw["mic_released"](0.1)
     fw["paint"](0.2)
     assert fw["mic_slot"] is None, "nothing was ever held, so nothing is stuck"
+
+
+# -- the repository key ---------------------------------------------------
+
+
+def test_the_repo_key_answers_to_the_characters_the_host_sends(firmware):
+    # Same drift risk as the microphone key: two constants, two files -- and
+    # now two of them, either of which could go dark on its own.
+    assert firmware["REPO_CODE"] == REPO_PAGE
+    assert firmware["REPO_NONE_CODE"] == REPO_NO_PAGE
+
+
+def test_the_repo_key_is_steady_and_unlike_every_other_feature_key(firmware):
+    now = time.monotonic()
+    repo = firmware["colour_for"](REPO_PAGE, now, REPO_SLOT)
+
+    assert repo == firmware["REPO_IDLE"]
+    # Steady is the promise: it says the daemon is listening, not that there is
+    # a page. Motion here would compete with `blocked` and with a latched mic.
+    over_a_cycle = {firmware["colour_for"](REPO_PAGE, now + t, REPO_SLOT) for t in (0.0, 0.3, 0.7, 1.1, 2.3)}
+    assert over_a_cycle == {repo}, "the repo key does not animate"
+    assert repo not in (firmware["MIC_IDLE"], firmware["FN_IDLE"], firmware["NO_HOST"])
+
+
+def test_a_flash_naming_a_key_flashes_only_that_key(firmware):
+    firmware["handle"]({"t": "flash", "k": REPO_SLOT})
+    now = time.monotonic()
+
+    assert firmware["colour_for"](REPO_PAGE, now, REPO_SLOT) == firmware["FN_FLASH"]
+    assert firmware["colour_for"]("f", now, 15) == firmware["FN_IDLE"], (
+        "the function key must not answer for the repo key"
+    )
+
+
+def test_a_flash_naming_nothing_still_flashes_the_function_key(firmware):
+    # What every host before this change sends, and what the function key's own
+    # "nothing wants you" still sends.
+    firmware["handle"]({"t": "flash"})
+    now = time.monotonic()
+
+    assert firmware["colour_for"]("f", now, 15) == firmware["FN_FLASH"]
+    assert firmware["colour_for"](REPO_PAGE, now, REPO_SLOT) == firmware["REPO_IDLE"]
+
+
+def test_a_nonsense_flash_target_falls_back_to_the_function_key(firmware):
+    for wanted in (99, -1, "thirteen", None):
+        firmware["handle"]({"t": "flash", "k": wanted})
+        assert firmware["flash_slot"] is None
+
+
+def test_the_two_repo_states_are_told_apart_without_motion(firmware):
+    now = time.monotonic()
+    page = firmware["colour_for"](REPO_PAGE, now, REPO_SLOT)
+    none = firmware["colour_for"](REPO_NO_PAGE, now, REPO_SLOT)
+
+    assert page == firmware["REPO_IDLE"] and none == firmware["REPO_NONE"]
+    assert page != none
+    # Brighter, not a different hue: the difference is one of degree, and a
+    # second hue here would start competing with the agent states.
+    assert sum(page) > sum(none)
+    # Neither animates. Motion stays reserved for `blocked` and the mic latch.
+    for code in (REPO_PAGE, REPO_NO_PAGE):
+        over_a_cycle = {firmware["colour_for"](code, now + t, REPO_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
+        assert len(over_a_cycle) == 1
+
+
+def test_neither_repo_state_is_dark(firmware):
+    # Dark would read as the spare key beside it, or as no daemon at all.
+    for code in (REPO_PAGE, REPO_NO_PAGE):
+        assert firmware["colour_for"](code, time.monotonic(), REPO_SLOT) != firmware["OFF"]
+
+
+def test_a_repo_key_with_no_page_still_flashes_when_pressed(firmware):
+    # Pressing it can still succeed -- the colour reads only the config file,
+    # git knows more -- so the failure signal has to work in this state too.
+    firmware["handle"]({"t": "flash", "k": REPO_SLOT})
+    assert firmware["colour_for"](REPO_NO_PAGE, time.monotonic(), REPO_SLOT) == firmware["FN_FLASH"]

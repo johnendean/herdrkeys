@@ -5,7 +5,8 @@ Herdr itself uses, so `screen <data-port> 115200` is a live debugger.
 
     host -> device  {"v":1,"t":"hello"}
                     {"v":1,"t":"frame","k":"iwB------------f"}
-                    {"v":1,"t":"flash"}
+                    {"v":1,"t":"flash"}          flashes the function key
+                    {"v":1,"t":"flash","k":13}   flashes that key instead
     device -> host  {"v":1,"t":"hello","proto":1,"fw":"..."}
                     {"v":1,"t":"key","k":3}
 
@@ -33,7 +34,7 @@ class Device(Protocol):
 
     def fileno(self) -> int: ...
     def send_frame(self, frame: Frame) -> None: ...
-    def flash(self) -> None: ...
+    def flash(self, slot: int | None = None) -> None: ...
     def read_presses(self) -> list[int]: ...
     def close(self) -> None: ...
 
@@ -42,8 +43,16 @@ def encode_frame(frame: Frame) -> bytes:
     return json.dumps({"v": PROTOCOL_VERSION, "t": "frame", "k": frame.keys}).encode() + b"\n"
 
 
-def encode_flash() -> bytes:
-    return json.dumps({"v": PROTOCOL_VERSION, "t": "flash"}).encode() + b"\n"
+def encode_flash(slot: int | None = None) -> bytes:
+    """Ask the board to flash a key. Omit the slot for the function key.
+
+    The slot is optional so that older firmware, which knows nothing about it,
+    still flashes something rather than nothing.
+    """
+    message: dict[str, Any] = {"v": PROTOCOL_VERSION, "t": "flash"}
+    if slot is not None:
+        message["k"] = slot
+    return json.dumps(message).encode() + b"\n"
 
 
 def encode_hello() -> bytes:
@@ -116,8 +125,8 @@ class SerialDevice:
     def send_frame(self, frame: Frame) -> None:
         self._write(encode_frame(frame))
 
-    def flash(self) -> None:
-        self._write(encode_flash())
+    def flash(self, slot: int | None = None) -> None:
+        self._write(encode_flash(slot))
 
     def read_presses(self) -> list[int]:
         return decode_presses(self._read_messages())
@@ -132,6 +141,7 @@ class FakeDevice:
     def __init__(self) -> None:
         self.frames: list[Frame] = []
         self.flashes = 0
+        self.flashed_slots: list[int | None] = []
         self.queued_presses: list[int] = []
         self.closed = False
         self.firmware = "fake"
@@ -146,8 +156,9 @@ class FakeDevice:
     def send_frame(self, frame: Frame) -> None:
         self.frames.append(frame)
 
-    def flash(self) -> None:
+    def flash(self, slot: int | None = None) -> None:
         self.flashes += 1
+        self.flashed_slots.append(slot)
 
     def read_presses(self) -> list[int]:
         presses, self.queued_presses = self.queued_presses, []

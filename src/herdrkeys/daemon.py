@@ -16,10 +16,11 @@ from pathlib import Path
 
 from . import activate as activate_app
 from . import discovery, herdr, provision, reducer
+from . import repo as repo_module
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
 from .herdr_state import HerdrState
-from .model import FN_SLOT, Frame
+from .model import FN_SLOT, REPO_SLOT, Frame
 from .settling import Settler
 from .slots import SlotMap
 
@@ -276,8 +277,39 @@ class Daemon:
         if self._host_app:
             activate_app.activate(self._host_app)
 
+    def _focused_pane(self):
+        return next(
+            (pane for pane in self.state.agent_panes().values() if pane.focused), None
+        )
+
+    def _open_repo(self) -> None:
+        """Open the focused agent's repository in a browser.
+
+        Git is asked here and nowhere else. Resolving it on the render path
+        would put a subprocess between every status poll and the LEDs, to
+        answer a question nothing is asking until a finger lands on the key.
+
+        A flash covers every way this can come to nothing -- no focused agent,
+        no directory, not a repository, no `origin`, a remote that names no web
+        host -- because the key does the same thing in all of them, and none of
+        them is an error worth a log line every time you lean on the board.
+        """
+        focused = self._focused_pane()
+        url = repo_module.page_for(focused.cwd if focused else None)
+        if url is None:
+            if self.device is not None:
+                # This key, not the function key: flashing that would say
+                # "nothing wants your attention", a different statement.
+                self.device.flash(REPO_SLOT)
+            return
+        log.info("opening %s", url)
+        repo_module.open_url(url)
+
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
+        if slot == REPO_SLOT:
+            self._open_repo()
+            return
         if slot == FN_SLOT:
             target = reducer.next_attention_target(agent_panes, self.slots, self.settler)
             if target is None:
@@ -312,7 +344,18 @@ class Daemon:
         self.settler.tick(now)
         if reducer.sync_slots(agent_panes, self.slots, live):
             self.slots.save(self.config.state_path)
-        return reducer.render(agent_panes, self.slots, self.settler, connected=self.stream is not None)
+        focused = self._focused_pane()
+        # Read from `.git/config`, never `git` itself: this runs on every pass
+        # of the loop, and a subprocess here would sit between every status
+        # poll and the LEDs. Measured at 0.055ms against 14.2ms.
+        repo_page = repo_module.has_page(focused.cwd if focused else None)
+        return reducer.render(
+            agent_panes,
+            self.slots,
+            self.settler,
+            connected=self.stream is not None,
+            repo_page=repo_page,
+        )
 
     def _push(self, frame: Frame, now: float) -> None:
         if self.device is None:

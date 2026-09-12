@@ -15,6 +15,7 @@ SLOT_COUNT = 16
 # Which row it is physically depends on ROTATION, which only the device knows.
 FN_SLOT = 15
 MIC_SLOT = 12
+REPO_SLOT = 13
 FEATURE_SLOTS = (12, 13, 14, 15)
 AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: see next_attention_target
 
@@ -37,6 +38,11 @@ EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
 MIC = "m"  # the device decides what a microphone key emits, and what it looks like
+# The repo key, in its two states: the focused agent's directory has a page, or
+# it does not. Both are lit -- dark would be indistinguishable from the spare
+# key beside it -- and the device decides how far apart they look.
+REPO_PAGE = "r"
+REPO_NO_PAGE = "n"
 
 _STATE_CODE = {
     AgentState.IDLE: "i",
@@ -52,7 +58,7 @@ def state_code(state: AgentState, *, focused: bool) -> str:
     return code.upper() if focused else code
 
 
-def feature_keys(*, connected: bool) -> list[str]:
+def feature_keys(*, connected: bool, repo_page: bool = False) -> list[str]:
     """An empty frame with the feature row already filled in.
 
     One place decides what the non-agent keys show, so a frame and a blank frame
@@ -60,6 +66,7 @@ def feature_keys(*, connected: bool) -> list[str]:
     """
     keys = [EMPTY] * SLOT_COUNT
     keys[MIC_SLOT] = MIC
+    keys[REPO_SLOT] = REPO_PAGE if repo_page else REPO_NO_PAGE
     keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return keys
 
@@ -72,6 +79,9 @@ class AgentPane:
     agent: str
     state: AgentState
     focused: bool
+    # Where the pane is, so the repo key can ask git about it. Absent when
+    # Herdr has not reported one, which is a normal answer, not an error.
+    cwd: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,5 +95,5 @@ class Frame:
             raise ValueError(f"frame must be {SLOT_COUNT} chars, got {len(self.keys)!r}")
 
     @classmethod
-    def blank(cls, *, connected: bool) -> Frame:
-        return cls("".join(feature_keys(connected=connected)))
+    def blank(cls, *, connected: bool, repo_page: bool = False) -> Frame:
+        return cls("".join(feature_keys(connected=connected, repo_page=repo_page)))

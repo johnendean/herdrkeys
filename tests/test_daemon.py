@@ -7,7 +7,15 @@ from herdrkeys import daemon as daemon_module
 from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
 from herdrkeys.device import FakeDevice
-from herdrkeys.model import FEATURE_SLOTS, FN_SLOT, MIC_SLOT, AgentState
+from herdrkeys.model import (
+    FEATURE_SLOTS,
+    FN_SLOT,
+    MIC_SLOT,
+    REPO_NO_PAGE,
+    REPO_PAGE,
+    REPO_SLOT,
+    AgentState,
+)
 
 
 @pytest.fixture
@@ -587,3 +595,143 @@ def test_no_keybow_attached_does_nothing_at_all(rig, monkeypatch):
     monkeypatch.setattr(daemon_module.provision, "inspect", lambda *a, **k: called.append(True))
     instance._maybe_provision(0.0)
     assert called == [], "no board means nothing to inspect"
+
+
+# -- the repo key ---------------------------------------------------------
+
+
+@pytest.fixture
+def repo_rig(rig, monkeypatch):
+    """The daemon rig, with git and the browser replaced by recordings."""
+    instance, device, _focused, _activated = rig
+    asked, opened = [], []
+
+    def fake_remote(cwd, *, remote="origin", timeout=5.0):
+        asked.append(cwd)
+        return {"/code/herdrkeys": "git@github.com:johnendean/herdrkeys.git"}.get(cwd)
+
+    monkeypatch.setattr(daemon_module.repo_module, "remote_url", fake_remote)
+    monkeypatch.setattr(daemon_module.repo_module, "open_url", lambda url, **kw: opened.append(url))
+    return instance, device, asked, opened
+
+
+def repo_pane(pane_id, cwd, *, focused=False):
+    return {"pane_id": pane_id, "agent": "claude", "agent_status": "idle",
+            "revision": 1, "focused": focused, "cwd": cwd}
+
+
+def test_the_repo_key_opens_the_focused_agents_repository(repo_rig):
+    instance, _device, _asked, opened = repo_rig
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(REPO_SLOT)
+
+    assert opened == ["https://github.com/johnendean/herdrkeys"]
+
+
+def test_the_repo_key_follows_focus_rather_than_a_slot(repo_rig):
+    # Every other feature key is contextless; this one acts on whatever you are
+    # looking at, so moving focus must move what it opens.
+    instance, _device, _asked, opened = repo_rig
+    load(
+        instance,
+        [
+            repo_pane("w1:p1", "/elsewhere"),
+            repo_pane("w2:p1", "/code/herdrkeys", focused=True),
+        ],
+        "w2:p1",
+    )
+
+    instance.handle_press(REPO_SLOT)
+
+    assert opened == ["https://github.com/johnendean/herdrkeys"]
+
+
+def test_a_pane_outside_a_repository_flashes_its_own_key(repo_rig):
+    # Not the function key. Flashing that would say "nothing wants your
+    # attention", which is a different statement about a different key.
+    instance, device, _asked, opened = repo_rig
+    load(instance, [repo_pane("w1:p1", "/elsewhere", focused=True)], "w1:p1")
+
+    instance.handle_press(REPO_SLOT)
+
+    assert opened == []
+    assert device.flashed_slots == [REPO_SLOT]
+
+
+def test_no_focused_agent_flashes_rather_than_guessing(repo_rig):
+    # An unfocused agent pane is not a default. Opening someone else's repo
+    # because it happens to be the only one is worse than doing nothing.
+    instance, device, asked, opened = repo_rig
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys")], None)
+
+    instance.handle_press(REPO_SLOT)
+
+    assert opened == [] and asked == [], "git is not run when there is nothing to ask about"
+    assert device.flashed_slots == [REPO_SLOT]
+
+
+def test_a_focused_pane_with_no_directory_flashes(repo_rig):
+    instance, device, asked, opened = repo_rig
+    load(instance, [repo_pane("w1:p1", None, focused=True)], "w1:p1")
+
+    instance.handle_press(REPO_SLOT)
+
+    assert opened == [] and asked == []
+    assert device.flashed_slots == [REPO_SLOT]
+
+
+def test_git_is_never_run_while_rendering(repo_rig):
+    # The key is steady rather than lit-when-available precisely so that no
+    # frame costs a subprocess. A regression here would put git between every
+    # status poll and the LEDs.
+    instance, _device, asked, _opened = repo_rig
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    for tick in range(10):
+        instance.render(float(tick))
+
+    assert asked == [], "rendering must not ask git anything"
+
+
+def test_the_frame_says_whether_the_focused_agent_has_a_page(rig, monkeypatch):
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(
+        daemon_module.repo_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+    )
+
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+    assert instance.render(2.0).keys[REPO_SLOT] == REPO_PAGE
+
+    load(instance, [repo_pane("w1:p1", "/elsewhere", focused=True)], "w1:p1")
+    assert instance.render(4.0).keys[REPO_SLOT] == REPO_NO_PAGE
+
+
+def test_the_frame_follows_focus_between_repositories(rig, monkeypatch):
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(
+        daemon_module.repo_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+    )
+    panes = [repo_pane("w1:p1", "/elsewhere", focused=True), repo_pane("w2:p1", "/code/herdrkeys")]
+
+    load(instance, panes, "w1:p1")
+    assert instance.render(2.0).keys[REPO_SLOT] == REPO_NO_PAGE
+
+    instance.state.focused_pane_id = "w2:p1"
+    assert instance.render(3.0).keys[REPO_SLOT] == REPO_PAGE
+
+
+def test_rendering_spawns_no_process(rig, monkeypatch):
+    # The whole reason the colour is read from .git/config: render runs on
+    # every pass of the loop, at least twice a second. A subprocess here would
+    # sit between every status poll and the LEDs -- 14.2ms against 0.055ms --
+    # and a git that hangs would freeze all sixteen keys, not just this one.
+    def forbidden(*args, **kwargs):
+        raise AssertionError("rendering must not spawn a process")
+
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(daemon_module.repo_module.subprocess, "run", forbidden)
+    load(instance, [repo_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    for tick in range(10):
+        instance.render(float(tick))
