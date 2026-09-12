@@ -107,7 +107,7 @@ already running `doctor` reports the port as in use rather than probing it.
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 126 tests, no keypad and no running Herdr required
+make test   # 127 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -214,3 +214,9 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 - The daemon resends the current frame every two seconds even when nothing has
   changed. The board discards a frame older than six seconds and falls back to
   showing no host, so a dead daemon cannot leave stale agent states lit.
+- The keypad is read on every pass of the loop, not only when the selector says
+  the port is readable. A daemon that had outlived a week of unplugs was once
+  found still writing those frames -- so the LEDs looked perfect -- while kqueue
+  had stopped reporting its descriptor readable. Every press went unread, and
+  because writing still worked, nothing in the log said so. See ADR 0007, which
+  also says what to capture before restarting if it ever recurs.

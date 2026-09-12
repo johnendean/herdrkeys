@@ -343,6 +343,51 @@ def test_a_stale_descriptor_drops_the_keypad_rather_than_the_daemon(rig, monkeyp
     assert device.closed
 
 
+def test_presses_are_read_even_when_the_selector_never_reports_the_keypad(rig, monkeypatch):
+    # Found on a live board: a daemon that had outlived a week of unplugs was
+    # still writing frames -- so the LEDs looked perfect -- while kqueue had
+    # stopped reporting its descriptor readable. Waiting to be told the keypad
+    # was readable meant every press was dropped, silently and for good, because
+    # writing still worked and so nothing ever surfaced an error.
+    instance, device, focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "working")], "w1:p1")
+
+    class Stop(Exception):
+        """Ends run_forever from the clock, since nothing else ever does."""
+
+    class DeafSelector:
+        """Accepts any registration and then never reports it ready."""
+
+        def register(self, fileno, events, data):
+            pass
+
+        def select(self, timeout):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(daemon_module.selectors, "DefaultSelector", DeafSelector)
+    monkeypatch.setattr(daemon_module.herdr, "EventStream",
+                        lambda path, **kw: (_ for _ in ()).throw(OSError("no herdr")))
+    device.fileno = lambda: 0
+    device.queued_presses = [0]
+
+    ticks = iter([0.0, 0.01, 0.02])
+
+    def clock():
+        try:
+            return next(ticks)
+        except StopIteration:
+            raise Stop
+
+    instance.clock = clock
+    with pytest.raises(Stop):
+        instance.run_forever()
+
+    assert focused == ["w1:p1"], "the press was read without the selector announcing it"
+
+
 # -- status polling ------------------------------------------------------
 
 
