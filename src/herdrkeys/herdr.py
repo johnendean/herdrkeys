@@ -91,17 +91,35 @@ def agents(path: Path, *, timeout: float = 5.0) -> list[dict[str, Any]]:
 
 
 def focus_agent(path: Path, pane_id: str, *, timeout: float = 5.0) -> None:
-    """Focus the agent in a pane.
+    """Focus the agent in a pane, by focusing the pane.
 
-    `agent.focus` rather than `pane.focus` because focusing through the agent
-    surface marks the agent seen, which is what turns `done` back into `idle`.
-    It accepts a pane ID as its target. If the agent has left the pane since the
-    frame was drawn, fall back to focusing the pane itself.
+    `pane.focus` is what moves the viewport, and it is the only part of this
+    that must succeed.
+
+    Not `agent.focus`, which ADR 0001 chose and which no longer works. Herdr
+    0.9.0 moved the terminal UI into each client, and `agent.focus` was left
+    behind: it still updates session focus, still logs `workspace focused` and
+    `tab focused`, still answers `ok` -- and never reaches a surface-active
+    client, so nothing on screen moves. Its sibling focus calls were not
+    affected; `pane.focus` still propagates, and lands on the exact pane even
+    when the hop crosses a workspace. Upstream is herdr#3760, fixed on master
+    and unreleased as of 0.9.0, so this cannot simply be waited out.
+
+    `agent.focus` is then sent anyway, and its failure ignored. Marking an agent
+    seen -- what turns `done` back into `idle` -- is the reason ADR 0001 went
+    through the agent surface, and the server keeps a seen state of its own that
+    `agent.list` reports and the keys are drawn from. Going through the agent
+    surface is the documented way to set it, it still works server-side, and it
+    costs a fraction of a millisecond. It is sent second because it is the
+    expendable one: if the agent has left the pane since the frame was drawn it
+    raises `agent_not_found`, which must not cost us the navigation we already
+    did.
     """
+    request(path, "pane.focus", {"pane_id": pane_id}, timeout=timeout)
     try:
         request(path, "agent.focus", {"target": pane_id}, timeout=timeout)
     except HerdrError:
-        request(path, "pane.focus", {"pane_id": pane_id}, timeout=timeout)
+        pass
 
 
 class EventStream:
