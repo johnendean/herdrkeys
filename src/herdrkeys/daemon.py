@@ -398,5 +398,13 @@ class Daemon:
                 self._pump_herdr(now)
             elif self._backlog_done(now):
                 self._settle_backlog(now)
-            if "device" in woken:
-                self._pump_device(now)
+            # Read the keypad every pass, not only when the selector named it.
+            # A daemon that had outlived a week of unplugs was found still
+            # writing frames -- so the LEDs looked perfect -- while kqueue had
+            # quietly stopped reporting its descriptor readable. Every press
+            # went unread, and because writing still worked, nothing in the log
+            # said so. Reads never block and the loop already wakes for the
+            # status poll, so asking unprompted costs one syscall and turns the
+            # worst case from "presses stop forever" into "a press arrives a
+            # poll late".
+            self._pump_device(now)
