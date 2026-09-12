@@ -1,0 +1,94 @@
+name: CI
+
+# Pull requests are what this exists for: main is protected on the `build` job
+# below, so nothing reaches main without one of these going green. Pushes to
+# main are still built, to catch a merge that is broken by its own merge commit
+# rather than by either parent.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A second push to a branch makes the first run pointless. Main is exempt: its
+# history is what the badge and the protection rule are about.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One broken combination should not hide the state of the other three.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # pytest is the only dependency, and only for the tests: see ADR 0003.
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+
+      - run: python -m pytest -q
+
+  # ADR 0003: the shipped path runs against a bare system python3 with
+  # PYTHONPATH at the checkout -- no venv, no pip, no network at install time.
+  # The test job cannot prove that, because it has just pip-installed the
+  # package. This imports every module with nothing installed at all, so an
+  # import of something that happens to be in the dev venv cannot pass unseen.
+  no-dependencies:
+    name: no third-party dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Import every module with nothing installed
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          import pathlib, importlib
+          # Dunder modules are skipped, not overlooked: importing
+          # herdrkeys.__main__ runs sys.exit(main()), which starts the daemon
+          # and blocks until the job times out. Found the hard way.
+          modules = sorted(
+              f"herdrkeys.{path.stem}"
+              for path in pathlib.Path("src/herdrkeys").glob("*.py")
+              if not path.stem.startswith("__")
+          )
+          for name in modules:
+              importlib.import_module(name)
+              print(f"ok  {name}")
+          print(f"\n{len(modules)} modules, no third-party imports")
+          PY
+
+  # The one check main is protected on. Requiring the matrix jobs directly
+  # would pin the protection rule to their generated names, so adding a python
+  # version or dropping a runner would silently stop being required. This gate
+  # is a stable name that fails whenever anything it needs does.
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [test, no-dependencies]
+    if: always()
+    steps:
+      - name: Check that everything passed
+        run: |
+          echo "tests:            ${{ needs.test.result }}"
+          echo "no-dependencies:  ${{ needs.no-dependencies.result }}"
+          [ "${{ needs.test.result }}" = "success" ] \
+            && [ "${{ needs.no-dependencies.result }}" = "success" ]
