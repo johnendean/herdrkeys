@@ -7,7 +7,7 @@ a running [Herdr](https://herdr.dev) session. The LEDs show what every agent is
 doing; the keys jump to them.
 
 ```
-[12 m mic    ] [13 -        ] [14 -        ] [15 f fn      ]   <- the feature row
+[12 m mic    ] [13 r repo   ] [14 -        ] [15 f fn      ]   <- the feature row
 [ 8 -        ] [ 9 -        ] [10 -        ] [11 -         ]
 [ 4 -        ] [ 5 -        ] [ 6 -        ] [ 7 -         ]
 [ 0 w working] [ 1 B blocked] [ 2 i idle   ] [ 3 -         ]
@@ -42,7 +42,7 @@ nothing wants you it flashes rather than doing nothing, so you know it heard you
 It is also the only key that shows whether the daemon can see Herdr at all --
 dark keys otherwise mean "no agents", which is not the same thing.
 
-The **microphone key** (slot 12) is the other. Hold it to dictate with Wispr
+The **microphone key** (slot 12) is another. Hold it to dictate with Wispr
 Flow: the keypad holds Right Option down for as long as your finger is down,
 which is what Flow's push-to-talk listens for, and lets go when you do. **Tap it
 instead and the microphone latches open** until you tap again -- for anything
@@ -58,7 +58,20 @@ The keystroke comes from the board itself rather than from the daemon, so it
 needs no Accessibility permission -- but the daemon is what tells the board which
 key it is, so a keypad showing "no host" will not dictate either.
 
-Slots 13 and 14 are spare and stay dark.
+The **repo key** (slot 13) opens the focused agent's repository in a browser. It
+follows focus rather than remembering a repository of its own, so what it opens
+is whatever you are looking at. Any remote that names a host works -- GitHub,
+GitLab, Bitbucket, a forge of your own -- because the rewrite from `git@host:o/r`
+to `https://host/o/r` is the same everywhere; there is no list of supported
+hosts to be missing from.
+
+It is lit whenever the daemon is running, and does not claim there is a page to
+open. Knowing that in advance would mean running git on every frame, to answer a
+question nobody asks until a finger lands on the key. So a press that finds no
+repository, no `origin`, or a remote that is only a local path flashes *that*
+key, the way the function key flashes when nothing wants you.
+
+Slot 14 is spare and stays dark.
 
 ## Install
 

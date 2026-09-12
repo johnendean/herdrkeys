@@ -7,6 +7,8 @@ from herdrkeys.model import (
     FN_DISCONNECTED,
     MIC,
     MIC_SLOT,
+    REPO,
+    REPO_SLOT,
     AgentPane,
     AgentState,
 )
@@ -37,7 +39,7 @@ def test_frame_is_one_character_per_key():
     panes = {"a": pane("a", AgentState.WORKING)}
     slots = SlotMap({0: "a"})
     frame = render(panes, slots, settled(*panes.values()), connected=True)
-    assert frame.keys == "w" + EMPTY * 11 + MIC + EMPTY * 2 + FN_CONNECTED
+    assert frame.keys == "w" + EMPTY * 11 + MIC + REPO + EMPTY + FN_CONNECTED
 
 
 def test_focus_is_shown_by_case_not_by_a_different_state():
@@ -175,4 +177,13 @@ def test_the_feature_row_is_in_every_frame():
     for connected in (True, False):
         frame = render({}, SlotMap(), Settler(), connected=connected)
         assert frame.keys[MIC_SLOT] == MIC
-        assert frame.keys[13] == frame.keys[14] == EMPTY, "13 and 14 are spare, and dark"
+        assert frame.keys[14] == EMPTY, "14 is the last spare, and dark"
+
+
+def test_the_repo_key_is_lit_whenever_the_daemon_is():
+    # It cannot know whether there is a page to open without running git on
+    # every frame, so it promises only that something is listening. A press
+    # that finds nothing flashes instead.
+    for connected in (True, False):
+        frame = render({}, SlotMap(), Settler(), connected=connected)
+        assert frame.keys[REPO_SLOT] == REPO

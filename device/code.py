@@ -42,7 +42,7 @@ except Exception:
     DICTATION_KEY = None
 
 PROTOCOL = 1
-FIRMWARE = "herdrkeys-device/0.2.0"
+FIRMWARE = "herdrkeys-device/0.3.0"
 
 # --- palette ---------------------------------------------------------------
 # One hue per meaning. Focus is shown by brightness, never by hue, so hue only
@@ -70,6 +70,13 @@ FN_IDLE = (34, 44, 34)      # function key, daemon connected
 # Green and blue are kept equal: at low duty an unbalanced pair reads as a tint.
 MIC_IDLE = (0, 26, 26)
 MIC_OPEN = (0, 160, 200)
+
+# The repository key. Violet is unused by every agent state and by the mic, and
+# it is steady: the host cannot know whether there is a page to open without
+# running git on every frame, so this key promises only that the daemon is
+# listening. A press that finds nothing flashes, as the function key does.
+REPO_CODE = "r"
+REPO_IDLE = (45, 0, 70)
 
 # A press shorter than this latches the microphone open instead of closing it
 # with your finger; anything longer is an ordinary hold. Long enough not to fire
@@ -132,6 +139,7 @@ keybow.led_sleep_enabled = False  # a status display must never time out
 
 data = usb_cdc.data
 
+flash_slot = None       # which key is flashing, or None for the function key
 frame = None            # last frame received, or None before the first one
 frame_at = 0.0          # when it arrived, so a stale one can be discarded
 last_rgb = [None] * 16
@@ -218,9 +226,13 @@ def colour_for(code, now, slot):
     if code == "-":
         return OFF
     if code == "f":
-        if now < flash_until:
+        if now < flash_until and flash_slot in (None, slot):
             return FN_FLASH
         return FN_IDLE
+    if code == REPO_CODE:
+        if now < flash_until and flash_slot == slot:
+            return FN_FLASH
+        return REPO_IDLE
     if code == MIC_CODE:
         if slot != mic_slot:
             return MIC_IDLE
@@ -267,7 +279,7 @@ def paint(now):
 
 
 def handle(message):
-    global frame, frame_at, flash_until
+    global frame, frame_at, flash_until, flash_slot
     if not isinstance(message, dict):
         return
     kind = message.get("t")
@@ -280,6 +292,9 @@ def handle(message):
             frame_at = time.monotonic()
     elif kind == "flash":
         flash_until = time.monotonic() + FLASH_SECONDS
+        # No slot means the function key, which is what every older host sends.
+        wanted = message.get("k")
+        flash_slot = wanted if isinstance(wanted, int) and 0 <= wanted < 16 else None
 
 
 def read_host():

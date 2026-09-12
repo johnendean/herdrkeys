@@ -27,6 +27,7 @@ class PaneRecord:
     agent: str | None
     state: AgentState
     revision: int
+    cwd: str | None = None
 
     @property
     def is_agent_pane(self) -> bool:
@@ -46,7 +47,23 @@ def _record_from_pane(pane: dict[str, Any]) -> PaneRecord:
         agent=pane.get("agent"),
         state=_state_of(pane.get("agent_status")),
         revision=int(pane.get("revision", 0)),
+        # `foreground_cwd` is where the running program is; `cwd` is the pane's
+        # own. They agree for an agent pane, and `cwd` survives the agent
+        # exiting, so it is the one asked first.
+        cwd=pane.get("cwd") or pane.get("foreground_cwd"),
     )
+
+
+def _keeping_cwd(record: PaneRecord, existing: PaneRecord | None) -> PaneRecord:
+    """Carry a known directory across an update that does not mention one.
+
+    Herdr omits `cwd` from some pane payloads. Taking the new record whole
+    would blank it, and the repo key would do nothing until the next payload
+    that happened to include it.
+    """
+    if record.cwd is None and existing is not None and existing.cwd is not None:
+        return replace(record, cwd=existing.cwd)
+    return record
 
 
 class HerdrState:
@@ -85,7 +102,7 @@ class HerdrState:
                 # Hold the high-water revision, so a `pane_updated` replayed
                 # after this poll cannot overwrite it through the guard below.
                 record = replace(record, revision=max(record.revision, existing.revision))
-            self.panes[record.pane_id] = record
+            self.panes[record.pane_id] = _keeping_cwd(record, existing)
             if row.get("focused"):
                 focused = record.pane_id
             else:
@@ -135,7 +152,7 @@ class HerdrState:
         existing = self.panes.get(record.pane_id)
         if existing is not None and not force and record.revision < existing.revision:
             return  # backlog replay: an update older than what we already hold
-        self.panes[record.pane_id] = record
+        self.panes[record.pane_id] = _keeping_cwd(record, existing)
         if pane.get("focused"):
             self.focused_pane_id = record.pane_id
 
@@ -155,7 +172,7 @@ class HerdrState:
         if existing is None:
             self.panes[pane_id] = PaneRecord(
                 pane_id=pane_id, agent=agent, state=AgentState.UNKNOWN, revision=0
-            )
+            )  # no cwd: the event does not carry one, a snapshot or poll will
         else:
             self.panes[pane_id] = replace(existing, agent=agent)
 
@@ -168,6 +185,7 @@ class HerdrState:
                 agent=record.agent or "",
                 state=record.state,
                 focused=record.pane_id == self.focused_pane_id,
+                cwd=record.cwd,
             )
             for record in self.panes.values()
             if record.is_agent_pane

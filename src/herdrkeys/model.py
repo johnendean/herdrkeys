@@ -15,6 +15,7 @@ SLOT_COUNT = 16
 # Which row it is physically depends on ROTATION, which only the device knows.
 FN_SLOT = 15
 MIC_SLOT = 12
+REPO_SLOT = 13
 FEATURE_SLOTS = (12, 13, 14, 15)
 AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: see next_attention_target
 
@@ -37,6 +38,10 @@ EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
 MIC = "m"  # the device decides what a microphone key emits, and what it looks like
+# Steady whenever the daemon is connected, whether or not the focused agent is
+# in a repository. Knowing that in advance would mean running git on the render
+# path; a press that finds nothing flashes instead, as the function key does.
+REPO = "r"
 
 _STATE_CODE = {
     AgentState.IDLE: "i",
@@ -60,6 +65,7 @@ def feature_keys(*, connected: bool) -> list[str]:
     """
     keys = [EMPTY] * SLOT_COUNT
     keys[MIC_SLOT] = MIC
+    keys[REPO_SLOT] = REPO
     keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return keys
 
@@ -72,6 +78,9 @@ class AgentPane:
     agent: str
     state: AgentState
     focused: bool
+    # Where the pane is, so the repo key can ask git about it. Absent when
+    # Herdr has not reported one, which is a normal answer, not an error.
+    cwd: str | None = None
 
 
 @dataclass(frozen=True)
