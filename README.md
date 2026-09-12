@@ -177,7 +177,8 @@ Keybow 2040 ──usb_cdc data, JSON lines──┐
                                         ▼
                   ~/.config/herdr/herdr.sock, JSON lines
                   agent.list (polled, the status source)
-                  events.subscribe (pushed, a bonus) + agent.focus
+                  events.subscribe (pushed, a bonus)
+                  pane.focus on a press (+ agent.focus, ADR 0008)
 ```
 
 The board is deliberately dumb: it renders frames and reports presses. It holds

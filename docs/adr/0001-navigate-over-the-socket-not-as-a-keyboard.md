@@ -4,7 +4,8 @@ Date: 2026-09-03
 
 ## Status
 
-Accepted
+Accepted. Amended by ADR 0008, which replaces `agent.focus` with `pane.focus`
+after Herdr 0.9.0 stopped propagating the former to a viewing client.
 
 ## Context
 
@@ -36,7 +37,8 @@ daemon calls `agent.focus` on Herdr's socket. The keypad declares no HID
 keyboard usage of its own and never types anything.
 
 `agent.focus` rather than `pane.focus`: focusing through the agent surface marks
-the agent seen, which is what collapses `done` back to `idle`.
+the agent seen, which is what collapses `done` back to `idle`. (Superseded by
+ADR 0008: `agent.focus` alone no longer moves the viewport on Herdr 0.9.0.)
 
 ## Consequences
 
