@@ -7,9 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-from .paths import resolve_config, state_dir, xdg_config_dir
-
-STATE_PATH = state_dir() / "slots.json"
+from .paths import resolve_config, xdg_config_dir
 
 
 @dataclass
@@ -23,7 +21,6 @@ class Config:
     terminal_app: str | None = None
     socket_path: Path | None = None
     serial_port: str | None = None
-    state_path: Path = STATE_PATH
     salvage_dir: Path | None = None  # defaults beside the config file in effect
     provision: bool = True
 
@@ -59,6 +56,7 @@ class Config:
             config.socket_path = Path(str(raw["socket_path"])).expanduser()
         if raw.get("serial_port"):
             config.serial_port = str(raw["serial_port"])
-        if raw.get("state_path"):
-            config.state_path = Path(str(raw["state_path"])).expanduser()
+        # `state_path` is accepted and ignored: it configured the slot map,
+        # which no longer exists (ADR 0009). An old config file must not stop
+        # the daemon starting.
         return config

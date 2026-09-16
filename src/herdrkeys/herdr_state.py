@@ -11,6 +11,12 @@ Two things about Herdr's stream shape drive this design:
   `agent.list` and folded by `apply_agents`. `pane_updated` carries the whole
   pane object, status included, so events still count -- they just are not the
   thing being waited on. See ADR 0005.
+
+`agent.list` also fixes the *order* the agents are in, and that order is what the
+keys mirror (ADR 0009), so it is recorded rather than inferred. Dict insertion
+order will not do: `panes` is built from a snapshot and then mutated by events,
+and a `pane_moved` re-key or a pane learned from an event lands wherever the
+dict happens to put it, which is not where Herdr shows it.
 """
 
 from __future__ import annotations
@@ -70,6 +76,8 @@ class HerdrState:
     def __init__(self) -> None:
         self.panes: dict[str, PaneRecord] = {}
         self.focused_pane_id: str | None = None
+        # The order Herdr lists agents in, which is the order the keys take.
+        self.agent_order: list[str] = []
 
     # -- ingest ----------------------------------------------------------
 
@@ -80,6 +88,12 @@ class HerdrState:
             record = _record_from_pane(pane)
             self.panes[record.pane_id] = record
         self.focused_pane_id = snapshot.get("focused_pane_id")
+        # `agents` is the same list `agent.list` answers with, in the same
+        # order. A snapshot without one leaves the order alone rather than
+        # clearing it: the next status poll is 500ms away at most.
+        agents = snapshot.get("agents")
+        if agents is not None:
+            self._set_order(agents)
 
     def apply_agents(self, rows: list[dict[str, Any]]) -> None:
         """Fold a status poll: authoritative about state, silent about lifetime.
@@ -87,9 +101,11 @@ class HerdrState:
         `agent.list` answers "which panes have an agent, and what is it doing",
         so a pane it does not mention either has no agent or is not a pane at
         all. Panes are therefore updated and released here, never forgotten --
-        forgetting stays with the snapshot and `pane_closed`, so a slot outlives
-        the agent that was in it (ADR 0002).
+        forgetting stays with the snapshot and `pane_closed`. The pane survives
+        losing its agent; its *key* does not, because the keys mirror this list
+        and this list no longer contains it (ADR 0009).
         """
+        self._set_order(rows)
         seen = set()
         focused, unfocused = None, set()
         for row in rows:
@@ -179,17 +195,37 @@ class HerdrState:
     # -- queries ---------------------------------------------------------
 
     def agent_panes(self) -> dict[str, AgentPane]:
-        return {
-            record.pane_id: AgentPane(
-                pane_id=record.pane_id,
-                agent=record.agent or "",
-                state=record.state,
-                focused=record.pane_id == self.focused_pane_id,
-                cwd=record.cwd,
-            )
-            for record in self.panes.values()
+        """Every agent pane, in the order Herdr lists them.
+
+        Iteration order is load-bearing: it is what the keys are numbered by.
+        An agent Herdr has not listed yet -- learned from `pane_agent_detected`
+        between two polls -- goes on the end in pane ID order, so it has a key
+        within the poll interval rather than none, and a deterministic one.
+        """
+        records = {
+            pane_id: record
+            for pane_id, record in self.panes.items()
             if record.is_agent_pane
+        }
+        listed = [pane_id for pane_id in self.agent_order if pane_id in records]
+        unlisted = sorted(set(records) - set(listed))
+        return {
+            pane_id: AgentPane(
+                pane_id=pane_id,
+                agent=records[pane_id].agent or "",
+                state=records[pane_id].state,
+                focused=pane_id == self.focused_pane_id,
+                cwd=records[pane_id].cwd,
+            )
+            for pane_id in listed + unlisted
         }
 
     def live_pane_ids(self) -> set[str]:
         return set(self.panes)
+
+    # -- internals -------------------------------------------------------
+
+    def _set_order(self, rows: list[dict[str, Any]]) -> None:
+        self.agent_order = [
+            row["pane_id"] for row in rows if row.get("pane_id")
+        ]

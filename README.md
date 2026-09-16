@@ -15,8 +15,11 @@ doing; the keys jump to them.
 
 ## What it does
 
-Every agent Herdr recognises claims a key and keeps it. The key's colour is that
-agent's lifecycle state:
+The keys mirror Herdr's agents pane: the first agent it lists is key 0, the
+second key 1, and so on along the bottom three rows. Close one and the agents
+below move up, exactly as they do on screen, so the key to press is the one in
+the position you can already see. The key's colour is that agent's lifecycle
+state:
 
 | State     | Colour            | Meaning |
 | --------- | ----------------- | ------- |
@@ -118,7 +121,6 @@ which half is unhappy:
 
 ```
 config file      ~/.config/herdrkeys/config.toml  (absent, using defaults)
-slot map         ~/.local/state/herdrkeys/slots.json
 herdr socket     ~/.config/herdr/herdr.sock  ok  (4 panes, 2 agent panes)
 keybow           /dev/cu.usbmodem11403  (console /dev/cu.usbmodem11401)  ok
 daemon           running, pid 35689
@@ -132,12 +134,12 @@ already running `doctor` reports the port as in use rather than probing it.
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 127 tests, no keypad and no running Herdr required
+make test   # 189 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
 
-The interesting logic -- slot assignment, settling, attention ordering -- is a
+The interesting logic -- key ordering, settling, attention ordering -- is a
 pure function of plain data, so it is tested against a real 99-event recording
 of a live Herdr session in `tests/fixtures/`.
 
@@ -157,9 +159,10 @@ plugin's directory is resolved either way and one precedence applies:
 | only the plugin's | the plugin's |
 | neither | the plugin's directory if Herdr made one, else XDG |
 
-`doctor` always prints the file actually in effect. State is deliberately not
-resolved this way: the slot map and log always live under
-`~/.local/state/herdrkeys/`, so they are in one place whoever started the daemon.
+`doctor` always prints the file actually in effect. The log is deliberately not
+resolved this way: it always lives under `~/.local/state/herdrkeys/`, so it is in
+one place whoever started the daemon. Nothing else is kept between runs -- the
+keys are wherever Herdr's list puts them, so there is nothing to remember.
 
 ### Named sessions
 
@@ -197,7 +200,7 @@ Keybow 2040 ──usb_cdc data, JSON lines──┐
    code.py: palette + animation only    │
                                         ▼
                                    herdrkeys daemon
-                                   slots, settling, attention
+                                   ordering, settling, attention
                                         │
                                         ▼
                   ~/.config/herdr/herdr.sock, JSON lines
@@ -206,8 +209,8 @@ Keybow 2040 ──usb_cdc data, JSON lines──┐
                   pane.focus on a press (+ agent.focus, ADR 0008)
 ```
 
-The board is deliberately dumb: it renders frames and reports presses. It holds
-no slot map and no policy. A frame is a 16-character string, one character per
+The board is deliberately dumb: it renders frames and reports presses. It knows
+nothing about agents and holds no policy. A frame is a 16-character string, one character per
 key, carrying *meaning* rather than colour -- so what red looks like is decided
 in one place, on the device.
 
@@ -225,6 +228,10 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 - Herdr's event backlog is bounded, rate-limited, and not a complete history,
   which is why the daemon reconciles against `session.snapshot` rather than
   trusting the stream, and ignores replayed events entirely. See ADR 0002.
+- Keys are positions in Herdr's agent list rather than bindings an agent keeps.
+  ADR 0002 chose the opposite and ADR 0009 supersedes it: the memory that turned
+  out to matter is the position you can see on screen, not a key an agent
+  claimed days ago.
 - Colour does not wait on that stream at all. Measured against a live session,
   it replays its backlog at ten events a second and then goes quiet -- 140
   seconds, five real status changes, no events -- so agent status is polled with

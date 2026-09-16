@@ -3,8 +3,8 @@
 The two sides fail independently and routinely -- you unplug the keypad, Herdr
 restarts on update -- so the daemon never exits voluntarily. Each side has its
 own reconnect loop with capped backoff, and launchd's KeepAlive is only a crash
-net. Cycling the process for a routine reconnect would throw away the in-memory
-slot map for no reason.
+net. Cycling the process for a routine reconnect would drop the connection to
+Herdr for no reason, and the keys go dark while it is gone.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from .config import Config
 from .device import Device, DeviceError, SerialDevice
 from .herdr_state import HerdrState
 from .model import FN_SLOT, REPO_SLOT, Frame
-from .settling import Settler
-from .slots import SlotMap
+from .paths import legacy_slot_map_path
+from .settling import OrderSettler, Settler
 
 log = logging.getLogger("herdrkeys")
 
@@ -55,6 +55,26 @@ BACKLOG_QUIET_SECONDS = 0.75
 BACKLOG_MAX_SECONDS = 10.0
 
 
+def remove_legacy_slot_map() -> None:
+    """Delete the slot map left behind by the versions that kept one.
+
+    Keys are positions in Herdr's list now and nothing persists between runs
+    (ADR 0009). The file is ours, in our own state directory, and nothing will
+    ever read it again -- but it looks exactly like live state to anyone running
+    `doctor` after a puzzling session, and what it says will not match the
+    board. Leaving a file that lies is worse than removing one.
+    """
+    path = legacy_slot_map_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        log.debug("could not remove the old slot map at %s: %s", path, exc)
+        return
+    log.info("removed the old slot map at %s; keys follow herdr's order now", path)
+
+
 class Backoff:
     def __init__(self, minimum: float, maximum: float) -> None:
         self.minimum, self.maximum = minimum, maximum
@@ -83,8 +103,8 @@ class Daemon:
         self.device_factory = device_factory
         self.socket_path: Path = config.socket_path or herdr.default_socket_path()
         self.state = HerdrState()
-        self.slots = SlotMap.load(config.state_path)
         self.settler = Settler(config.settle_seconds)
+        self.order = OrderSettler(config.settle_seconds)
 
         self.stream: herdr.EventStream | None = None
         self.device: Device | None = None
@@ -207,7 +227,6 @@ class Daemon:
         """
         snapshot = herdr.snapshot(self.socket_path)
         self.state.apply_snapshot(snapshot)
-        self.slots.gc(self.state.live_pane_ids())
         self._next_reconcile = now + self.config.reconcile_seconds
 
     def _poll_status(self, now: float) -> None:
@@ -307,18 +326,22 @@ class Daemon:
 
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
+        # The settled order, which is the one the keys were drawn from. Reading
+        # the live order here would mean a press landing on an agent that is
+        # not yet under that key.
+        order = self.order.settled()
         if slot == REPO_SLOT:
             self._open_repo()
             return
         if slot == FN_SLOT:
-            target = reducer.next_attention_target(agent_panes, self.slots, self.settler)
+            target = reducer.next_attention_target(agent_panes, order, self.settler)
             if target is None:
                 if self.device is not None:
                     self.device.flash()  # heard you; nothing wants you
                 return
             self._focus(target)
             return
-        pane_id = reducer.pane_for_slot(slot, agent_panes, self.slots)
+        pane_id = reducer.pane_for_slot(slot, agent_panes, order)
         if pane_id is not None:
             self._focus(pane_id)
 
@@ -342,8 +365,12 @@ class Daemon:
             self.settler.observe(pane_id, pane.state, now)
         self.settler.retain(live)
         self.settler.tick(now)
-        if reducer.sync_slots(agent_panes, self.slots, live):
-            self.slots.save(self.config.state_path)
+        # Which key each agent is, settled on the same clock as what each key
+        # shows: the order is Herdr's list order, so one poll that omits an
+        # agent would otherwise renumber every key below it and renumber them
+        # back half a second later.
+        self.order.observe(agent_panes, now)
+        self.order.tick(now)
         focused = self._focused_pane()
         # Read from `.git/config`, never `git` itself: this runs on every pass
         # of the loop, and a subprocess here would sit between every status
@@ -351,7 +378,7 @@ class Daemon:
         repo_page = repo_module.has_page(focused.cwd if focused else None)
         return reducer.render(
             agent_panes,
-            self.slots,
+            self.order.settled(),
             self.settler,
             connected=self.stream is not None,
             repo_page=repo_page,
@@ -377,9 +404,9 @@ class Daemon:
         candidates = [IDLE_TIMEOUT]
         if self.device is not None:
             candidates.append(max(0.0, self._last_push_at + HEARTBEAT_SECONDS - now))
-        settle = self.settler.next_deadline(now)
-        if settle is not None:
-            candidates.append(settle)
+        for settle in (self.settler.next_deadline(now), self.order.next_deadline(now)):
+            if settle is not None:
+                candidates.append(settle)
         if self.stream is None:
             candidates.append(self._herdr_backoff.wait_for(now))
         else:
@@ -393,7 +420,8 @@ class Daemon:
         return max(0.01, min(candidates))
 
     def run_forever(self) -> None:
-        log.info("herdrkeys starting; socket=%s state=%s", self.socket_path, self.config.state_path)
+        log.info("herdrkeys starting; socket=%s", self.socket_path)
+        remove_legacy_slot_map()
         while True:
             now = self.clock()
 

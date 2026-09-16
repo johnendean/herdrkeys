@@ -1,4 +1,7 @@
-"""Hold state changes briefly so agent-startup flapping never reaches the LEDs.
+"""Hold changes briefly so agent-startup flapping never reaches the LEDs.
+
+Two things settle, for the same reason and on the same clock: what a key
+*shows* (`Settler`) and which key an agent *is* (`OrderSettler`).
 
 Herdr really emits this while an agent boots (captured from a live session):
 
@@ -16,6 +19,8 @@ Pure: the clock is injected.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 from .model import AgentState
 
@@ -74,3 +79,55 @@ class Settler:
             return None
         soonest = min(since for _, since in self._pending.values())
         return max(0.0, soonest + self.settle_seconds - now)
+
+
+class OrderSettler:
+    """Hold a change in the agent order until it stops moving.
+
+    The keys mirror the order `agent.list` returns (ADR 0009), so a single poll
+    that omits an agent does not just darken one key -- it renumbers every key
+    below it. The list is polled twice a second and `apply_agents` drops an
+    agent the moment one poll leaves it out, so one blip would shuffle the board
+    and the next poll would shuffle it back.
+
+    What this does *not* do is protect a restart in place. Quitting an agent and
+    starting another takes seconds, not milliseconds, so the keys below it will
+    move and move back. That is the price of mirroring, paid knowingly: see
+    ADR 0009.
+
+    The whole order is one value, committed or not. Settling each agent's
+    membership separately would be more precise and buy nothing, since an agent
+    flapping in and out moves everything below it either way.
+
+    Pure: the clock is injected.
+    """
+
+    def __init__(self, settle_seconds: float = DEFAULT_SETTLE_SECONDS) -> None:
+        self.settle_seconds = settle_seconds
+        self._committed: tuple[str, ...] = ()
+        self._pending: tuple[tuple[str, ...], float] | None = None
+
+    def observe(self, order: Iterable[str], now: float) -> None:
+        candidate = tuple(order)
+        if candidate == self._committed:
+            self._pending = None
+            return
+        if self._pending is None or self._pending[0] != candidate:
+            self._pending = (candidate, now)
+
+    def tick(self, now: float) -> None:
+        if self._pending is None:
+            return
+        candidate, since = self._pending
+        if now - since >= self.settle_seconds:
+            self._committed = candidate
+            self._pending = None
+
+    def settled(self) -> tuple[str, ...]:
+        """The order safe to render. Empty until the first one has held still."""
+        return self._committed
+
+    def next_deadline(self, now: float) -> float | None:
+        if self._pending is None:
+            return None
+        return max(0.0, self._pending[1] + self.settle_seconds - now)

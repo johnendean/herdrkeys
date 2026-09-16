@@ -68,7 +68,7 @@ def test_the_environment_variable_is_honoured_when_herdr_sets_it(monkeypatch, tm
 
 
 def test_state_never_follows_the_plugin(monkeypatch, tmp_path):
-    # The slot map and log must be in one place however the daemon was started.
+    # The log must be in one place however the daemon was started.
     monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path / "plugin-state"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
     assert paths.state_dir() == tmp_path / "xdg-state" / "herdrkeys"

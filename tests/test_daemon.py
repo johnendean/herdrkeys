@@ -27,7 +27,7 @@ def rig(tmp_path, monkeypatch):
     activated = []
     monkeypatch.setattr(daemon_module.activate_app, "activate", lambda app: activated.append(app))
 
-    config = Config(settle_seconds=0.0, activate_terminal=True, state_path=tmp_path / "slots.json")
+    config = Config(settle_seconds=0.0, activate_terminal=True)
     device = FakeDevice()
     instance = Daemon(config, device_factory=lambda: device)
     instance.device = device
@@ -107,13 +107,28 @@ def test_no_feature_key_can_focus_an_agent(rig):
     assert focused == []
 
 
-def test_the_slot_map_survives_a_restart(rig, tmp_path):
+def test_nothing_about_the_keys_is_persisted(rig, tmp_path, monkeypatch):
+    # Keys are positions in Herdr's list (ADR 0009), so a restarted daemon
+    # rebuilds them from Herdr rather than from a file. Nothing is written.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     instance, _device, _focused, _ = rig
     load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "idle")], "w1:p1")
-    assert instance.config.state_path.exists()
+    assert list(tmp_path.glob("**/*.json")) == []
 
-    revived = Daemon(instance.config, device_factory=lambda: FakeDevice())
-    assert revived.slots.slot_of("w2:p1") == 1
+
+def test_a_slot_map_left_by_an_older_version_is_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    stale = tmp_path / "herdrkeys" / "slots.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"version": 1, "slots": {"1": "w9:p1"}}')
+
+    daemon_module.remove_legacy_slot_map()
+    assert not stale.exists(), "a file nothing reads, saying keys it does not own"
+
+
+def test_removing_the_slot_map_when_there_is_none_is_not_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    daemon_module.remove_legacy_slot_map()  # the second start, and every one after
 
 
 def test_a_frame_is_only_pushed_when_it_changes(rig):
@@ -431,20 +446,51 @@ def test_the_poll_paces_itself_and_keeps_the_loop_awake(rig, monkeypatch):
     assert instance._timeout(100.0) == 0.5, "the loop must wake for its own poll"
 
 
-def test_an_agent_leaving_goes_dark_but_keeps_its_slot(rig, monkeypatch):
+def test_an_agent_leaving_frees_its_key_and_the_rest_move_up(rig, monkeypatch):
     # `agent.list` only lists agent panes, so absence means the agent left --
-    # never that the pane did. Slots outlive agents (ADR 0002).
+    # never that the pane did. The pane survives; its key does not (ADR 0009).
     instance, _device, _focused, _ = rig
-    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "working")], "w1:p1")
-    assert instance.slots.slot_of("w2:p1") == 1
-    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [agent_row("w1:p1", "idle", focused=True)])
+    load(
+        instance,
+        [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "working"), agent_pane("w3:p1", "blocked")],
+        "w1:p1",
+    )
+    assert instance.render(1.0).keys[:3] == "Iwb"
+    monkeypatch.setattr(
+        daemon_module.herdr,
+        "agents",
+        lambda path: [agent_row("w1:p1", "idle", focused=True), agent_row("w3:p1", "blocked")],
+    )
 
     instance._poll_status(10.0)
-    assert instance.render(10.0).keys[1] == "-"
-    assert instance.slots.slot_of("w2:p1") == 1, "restarting an agent in place keeps its key"
+    assert instance.render(10.0).keys[:3] == "Ib-", "w3:p1 takes the key w2:p1 had"
 
 
-def test_an_agent_the_poll_finds_first_gets_a_slot(rig, monkeypatch):
+def test_the_order_holds_still_through_a_single_bad_poll(rig, monkeypatch):
+    # One poll omitting an agent would otherwise renumber every key below it,
+    # and the next poll half a second later would renumber them back.
+    instance, _device, _focused, _ = rig
+    instance.order.settle_seconds = 1.0
+    load(
+        instance,
+        [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "working"), agent_pane("w3:p1", "blocked")],
+        "w1:p1",
+    )
+    rows = [agent_row("w1:p1", "idle", focused=True), agent_row("w3:p1", "blocked")]
+    monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: rows)
+
+    instance._poll_status(10.0)
+    assert instance.render(10.0).keys[:3] == "I-b", (
+        "w3:p1 has not moved: one missing row is not yet a departure"
+    )
+    assert instance._timeout(10.0) <= 1.0, "the loop must wake to commit the new order"
+
+    rows.insert(1, agent_row("w2:p1", "working"))
+    instance._poll_status(10.2)
+    assert instance.render(10.2).keys[:3] == "Iwb", "and the blip cost nobody a key"
+
+
+def test_an_agent_the_poll_finds_first_gets_a_key(rig, monkeypatch):
     instance, _device, _focused, _ = rig
     load(instance, [agent_pane("w1:p1", "idle")], "w1:p1")
     monkeypatch.setattr(
@@ -455,8 +501,25 @@ def test_an_agent_the_poll_finds_first_gets_a_slot(rig, monkeypatch):
 
     instance._poll_status(10.0)
     frame = instance.render(10.0)
-    assert instance.slots.slot_of("w5:p2") == 1
     assert frame.keys[1] == "w", "a new agent need not wait for the next reconcile"
+
+
+def test_the_keys_take_the_order_herdr_lists_agents_in(rig, monkeypatch):
+    # Not pane ID order, and not the order they were discovered in: the order
+    # `agent.list` answers with, which is what the agents pane shows.
+    instance, _device, focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "idle")], "w1:p1")
+    monkeypatch.setattr(
+        daemon_module.herdr,
+        "agents",
+        lambda path: [agent_row("w2:p1", "working"), agent_row("w1:p1", "blocked", focused=True)],
+    )
+
+    instance._poll_status(10.0)
+    assert instance.render(10.0).keys[:2] == "wB", "w2:p1 is listed first, so it is key 0"
+    instance.handle_press(0)
+    assert focused == ["w2:p1"], "and the key goes where the board says it does"
+
 
 
 def test_the_poll_releases_focus_it_can_see_has_moved(rig, monkeypatch):

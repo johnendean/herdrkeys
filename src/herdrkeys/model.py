@@ -17,7 +17,7 @@ FN_SLOT = 15
 MIC_SLOT = 12
 REPO_SLOT = 13
 FEATURE_SLOTS = (12, 13, 14, 15)
-AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: see next_attention_target
+AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: slot n is the nth agent
 
 PROTOCOL_VERSION = 1
 

@@ -10,7 +10,7 @@ So the plugin's directory is resolved whether or not Herdr set the variable, and
 one order of precedence applies everywhere.
 
 State is deliberately *not* treated this way: it always lives under XDG, so the
-slot map and the log stay in one place no matter who started the daemon.
+log stays in one place no matter who started the daemon.
 """
 
 from __future__ import annotations
@@ -34,8 +34,16 @@ def xdg_config_dir() -> Path:
 
 
 def state_dir() -> Path:
-    """Always XDG, never the plugin's state dir: one slot map, one log."""
+    """Always XDG, never the plugin's state dir: one log, wherever we started."""
     return _xdg("XDG_STATE_HOME", ".local/state") / "herdrkeys"
+
+
+def legacy_slot_map_path() -> Path:
+    """Where versions before ADR 0009 persisted the slot map.
+
+    Nothing writes this any more. It survives only so the daemon can delete it.
+    """
+    return state_dir() / "slots.json"
 
 
 def plugin_config_dir() -> Path | None:

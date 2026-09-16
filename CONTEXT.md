@@ -20,6 +20,11 @@ pane outlives the agents that occupy it.
 **Agent** — A coding agent Herdr has recognised inside a pane. A pane has an
 agent only while one is detected; the pane's `agent` field is absent otherwise.
 
+**Agent list** — Every agent Herdr currently recognises, in the order Herdr
+presents them. Its agents pane renders this list; `agent.list` answers with it.
+Spoken of as "the agents pane", but **pane** already means one terminal here, so
+the list is the list.
+
 **Agent state** — Herdr's lifecycle classification of an agent. A closed set:
 `idle`, `working`, `blocked`, `done`, `unknown`. `done` is the same underlying
 idle state as `idle`, distinguished only by the work having finished unseen;
@@ -29,12 +34,17 @@ but unclassifiable — it does not mean the agent finished.
 
 ### herdrkeys terms
 
-**Agent pane** — A pane that currently has an agent. Only agent panes are
-eligible for a slot; plain shell panes are not represented on the keypad.
+**Agent pane** — A pane that currently has an agent. Only agent panes appear in
+the agent list, so only they reach the keypad; plain shell panes do not. A pane
+survives its agent leaving; its key does not.
 
-**Slot** — One of the keypad's 16 physical keys, together with the pane bound to
-it. Slots 0–11 hold agent panes. Slots 12–15 are the **feature row** and never
-hold one.
+**Slot** — One of the keypad's 16 physical keys, together with whatever it shows.
+Slots 0–11 are the **grid** and hold agents; slots 12–15 are the **feature row**
+and never do.
+
+**Grid** — Slots 0–11: the keys that hold agents. Holds twelve, which is as many
+as fit; an agent past the twelfth in the agent list is not on the board and the
+function key cannot reach it.
 
 **Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
 key**, 13 the **repo key**, 15 the **function key**, and 14 is spare. Which row
@@ -42,18 +52,20 @@ this is physically depends on how the board is turned, which only the device
 knows. There is no "function row": the row is the feature row, and the function
 key is one key in it.
 
-**Slot map** — The binding from slot to pane. A pane claims the lowest free slot
-when it first becomes an agent pane and holds that slot until the pane closes —
-not until the agent exits. Restarting an agent inside a pane therefore keeps its
-slot. The slot map outlives the daemon.
+**Key order** — Which agent is on which key: position in the **agent list**, and
+nothing else. The first agent Herdr lists is slot 0, the second slot 1. An agent
+leaving the list frees its key and the agents after it move up; one appearing
+above another moves it down. No agent owns a key, nothing is remembered between
+runs, and a dark key in the grid is a free key.
 
 **Frame** — One complete description of what all 16 keys should show: a
 16-character string, one character per key. A frame is absolute, never a delta,
 so any frame fully determines the keypad's appearance.
 
-**Settling** — Holding a state change briefly before it reaches a frame, so that
-the flapping Herdr emits while an agent starts does not reach the LEDs. A
-transition into `blocked` is never settled.
+**Settling** — Holding a change briefly before it reaches a frame, so that the
+flapping Herdr emits while an agent starts does not reach the LEDs. Two things
+settle: what a key shows, and the **key order**. A transition into `blocked` is
+never settled.
 
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the
 only key that shows whether the daemon can see Herdr at all.
