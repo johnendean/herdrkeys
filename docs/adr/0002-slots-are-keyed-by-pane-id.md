@@ -4,7 +4,13 @@ Date: 2026-09-03
 
 ## Status
 
-Accepted
+Superseded by ADR 0009, which numbers keys by position in Herdr's agent list.
+
+Superseded, not deleted: the evidence gathered here about pane ID stability,
+backlog replay pacing and revision collisions is what ADR 0005 and the daemon's
+backlog handling still rest on. Only the slot decision below is out of date --
+including the rejection of "flat live list, row-major", which is what ADR 0009
+went on to choose.
 
 ## Context
 

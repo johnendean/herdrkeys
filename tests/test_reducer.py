@@ -1,197 +1,188 @@
 import pytest
 
 from herdrkeys.model import (
+    AGENT_SLOTS,
     EMPTY,
     FEATURE_SLOTS,
     FN_CONNECTED,
     FN_DISCONNECTED,
     MIC,
-    MIC_SLOT,
     REPO_NO_PAGE,
-    REPO_PAGE,
     REPO_SLOT,
     AgentPane,
     AgentState,
 )
 from herdrkeys.reducer import (
     next_attention_target,
+    on_the_grid,
     pane_for_slot,
     render,
-    sync_slots,
 )
 from herdrkeys.settling import Settler
-from herdrkeys.slots import SlotMap
 
 
 def pane(pane_id, state, focused=False):
     return AgentPane(pane_id=pane_id, agent="claude", state=state, focused=focused)
 
 
-def settled(*panes):
+def panes(*specs):
+    """An ordered agent list, exactly as `HerdrState.agent_panes` hands one over."""
+    return {p.pane_id: p for p in specs}
+
+
+def settled(*agent_panes):
     """A settler that has already committed everything it was shown."""
     settler = Settler(0.0)
-    for p in panes:
+    for p in agent_panes:
         settler.observe(p.pane_id, p.state, 0.0)
     settler.tick(1.0)
     return settler
 
 
 def test_frame_is_one_character_per_key():
-    panes = {"a": pane("a", AgentState.WORKING)}
-    slots = SlotMap({0: "a"})
-    frame = render(panes, slots, settled(*panes.values()), connected=True)
+    live = panes(pane("a", AgentState.WORKING))
+    frame = render(live, ["a"], settled(*live.values()), connected=True)
     assert frame.keys == "w" + EMPTY * 11 + MIC + REPO_NO_PAGE + EMPTY + FN_CONNECTED
 
 
 def test_focus_is_shown_by_case_not_by_a_different_state():
-    panes = {"a": pane("a", AgentState.WORKING, focused=True)}
-    frame = render(panes, SlotMap({0: "a"}), settled(*panes.values()), connected=True)
+    live = panes(pane("a", AgentState.WORKING, focused=True))
+    frame = render(live, ["a"], settled(*live.values()), connected=True)
     assert frame.keys[0] == "W"
 
 
 def test_disconnected_is_distinguishable_from_having_no_agents():
-    empty_connected = render({}, SlotMap(), Settler(), connected=True)
-    empty_disconnected = render({}, SlotMap(), Settler(), connected=False)
+    empty_connected = render({}, [], Settler(), connected=True)
+    empty_disconnected = render({}, [], Settler(), connected=False)
     assert empty_connected.keys[-1] == FN_CONNECTED
     assert empty_disconnected.keys[-1] == FN_DISCONNECTED
     assert empty_connected != empty_disconnected, "sixteen dark keys must not mean two things"
 
 
-def test_a_slot_whose_agent_has_left_goes_dark_but_stays_reserved():
-    slots = SlotMap({0: "a"})
-    frame = render({}, slots, Settler(), connected=True)
-    assert frame.keys[0] == EMPTY
-    assert slots.slot_of("a") == 0, "the pane still exists, so it keeps its key"
-
-
 def test_unsettled_pane_renders_dark():
-    panes = {"a": pane("a", AgentState.UNKNOWN)}
-    frame = render(panes, SlotMap({0: "a"}), Settler(0.3), connected=True)
+    live = panes(pane("a", AgentState.UNKNOWN))
+    frame = render(live, ["a"], Settler(0.3), connected=True)
     assert frame.keys[0] == EMPTY
 
 
-# -- slot syncing --------------------------------------------------------
+def test_an_agent_gone_from_the_list_leaves_a_hole_until_the_order_settles():
+    # The order is settled separately and lags by up to settle_seconds, so for
+    # that moment it still names an agent that has gone. Blanking that one key
+    # is right: shifting everything below it now, and again when the new order
+    # commits, would move the survivors twice for one departure.
+    live = panes(pane("a", AgentState.WORKING), pane("c", AgentState.IDLE))
+    frame = render(live, ["a", "b", "c"], settled(*live.values()), connected=True)
+    assert frame.keys[:3] == "w" + EMPTY + "i"
 
 
-def test_sync_assigns_new_agent_panes_and_releases_closed_ones():
-    slots = SlotMap()
-    panes = {"a": pane("a", AgentState.IDLE), "b": pane("b", AgentState.IDLE)}
-    assert sync_slots(panes, slots, {"a", "b"}) is True
-    assert slots.slot_of("a") == 0 and slots.slot_of("b") == 1
-    assert sync_slots(panes, slots, {"a", "b"}) is False, "steady state does not churn"
+# -- the order is the key numbering --------------------------------------
 
 
-def test_restarting_an_agent_in_place_keeps_its_key():
-    # The pane survives; only its agent came and went. Verified against Herdr:
-    # pane 4 went agent=None -> Claude -> None -> Claude keeping its ID.
-    slots = SlotMap()
-    sync_slots({"w1:p1": pane("w1:p1", AgentState.IDLE)}, slots, {"w1:p1"})
-    sync_slots({}, slots, {"w1:p1"})  # agent exited, pane still open
-    assert slots.slot_of("w1:p1") == 0
-    sync_slots({"w1:p1": pane("w1:p1", AgentState.WORKING)}, slots, {"w1:p1"})
-    assert slots.slot_of("w1:p1") == 0
+def test_keys_follow_herdrs_order_not_the_order_agents_arrived():
+    live = panes(pane("b", AgentState.WORKING), pane("a", AgentState.IDLE))
+    frame = render(live, ["b", "a"], settled(*live.values()), connected=True)
+    assert frame.keys[:2] == "wi", "first in the list is key 0, whenever it showed up"
 
 
-def test_closing_the_pane_is_what_frees_the_key():
-    slots = SlotMap()
-    sync_slots({"w1:p1": pane("w1:p1", AgentState.IDLE)}, slots, {"w1:p1"})
-    assert sync_slots({}, slots, set()) is True
-    assert slots.slot_of("w1:p1") is None
+def test_closing_an_agent_moves_the_ones_below_it_up():
+    before = panes(
+        pane("a", AgentState.IDLE), pane("b", AgentState.WORKING), pane("c", AgentState.DONE)
+    )
+    assert render(before, ["a", "b", "c"], settled(*before.values()), connected=True).keys[:3] == "iwd"
+
+    after = panes(pane("a", AgentState.IDLE), pane("c", AgentState.DONE))
+    assert render(after, ["a", "c"], settled(*after.values()), connected=True).keys[:3] == "id-", (
+        "c takes b's key rather than leaving a gap behind"
+    )
+
+
+def test_an_agent_appearing_above_pushes_the_others_down():
+    # The cost of mirroring, stated as a test so nobody mistakes it for a bug:
+    # a new agent at the top of Herdr's list renumbers every key below it.
+    after = panes(pane("new", AgentState.WORKING), pane("a", AgentState.IDLE))
+    frame = render(after, ["new", "a"], settled(*after.values()), connected=True)
+    assert frame.keys[:2] == "wi"
+
+
+def test_the_grid_holds_twelve_agents_and_no_more():
+    ids = [f"w{n}:p1" for n in range(15)]
+    live = panes(*(pane(i, AgentState.BLOCKED) for i in ids))
+    frame = render(live, ids, settled(*live.values()), connected=True)
+    assert frame.keys[: len(AGENT_SLOTS)] == "b" * 12
+    for slot in FEATURE_SLOTS:
+        assert frame.keys[slot] != "b", "the feature row never holds an agent"
+    assert on_the_grid(ids) == ids[:12]
+
+
+# -- which key focuses what ----------------------------------------------
+
+
+def test_a_key_press_focuses_the_agent_at_that_position():
+    live = panes(pane("a", AgentState.IDLE), pane("b", AgentState.IDLE))
+    assert pane_for_slot(0, live, ["a", "b"]) == "a"
+    assert pane_for_slot(1, live, ["a", "b"]) == "b"
+    assert pane_for_slot(2, live, ["a", "b"]) is None, "past the end of the list"
+
+
+@pytest.mark.parametrize("slot", FEATURE_SLOTS)
+def test_the_feature_row_never_focuses_an_agent(slot):
+    ids = [f"w{n}:p1" for n in range(15)]
+    live = panes(*(pane(i, AgentState.IDLE) for i in ids))
+    assert pane_for_slot(slot, live, ids) is None
+
+
+def test_a_key_whose_agent_has_gone_focuses_nothing():
+    live = panes(pane("a", AgentState.IDLE))
+    assert pane_for_slot(1, live, ["a", "b"]) is None
 
 
 # -- the function key ----------------------------------------------------
 
 
 def test_blocked_wins_over_done():
-    panes = {
-        "done": pane("done", AgentState.DONE),
-        "blocked": pane("blocked", AgentState.BLOCKED),
-    }
-    slots = SlotMap({0: "done", 1: "blocked"})
-    assert next_attention_target(panes, slots, settled(*panes.values())) == "blocked"
+    live = panes(pane("done", AgentState.DONE), pane("blocked", AgentState.BLOCKED))
+    assert next_attention_target(live, ["done", "blocked"], settled(*live.values())) == "blocked"
 
 
 def test_nothing_to_go_to_returns_none():
-    panes = {"a": pane("a", AgentState.WORKING), "b": pane("b", AgentState.IDLE)}
-    slots = SlotMap({0: "a", 1: "b"})
-    assert next_attention_target(panes, slots, settled(*panes.values())) is None
+    live = panes(pane("a", AgentState.WORKING), pane("b", AgentState.IDLE))
+    assert next_attention_target(live, ["a", "b"], settled(*live.values())) is None
+
+
+def test_no_agents_at_all_returns_none():
+    assert next_attention_target({}, [], Settler()) is None
 
 
 def test_repeated_presses_walk_the_queue_rather_than_sticking():
-    panes = {
-        "x": pane("x", AgentState.BLOCKED, focused=True),
-        "y": pane("y", AgentState.BLOCKED),
-        "z": pane("z", AgentState.BLOCKED),
-    }
-    slots = SlotMap({0: "x", 1: "y", 2: "z"})
-    assert next_attention_target(panes, slots, settled(*panes.values())) == "y"
+    order = ["x", "y", "z"]
+    live = panes(
+        pane("x", AgentState.BLOCKED, focused=True),
+        pane("y", AgentState.BLOCKED),
+        pane("z", AgentState.BLOCKED),
+    )
+    assert next_attention_target(live, order, settled(*live.values())) == "y"
 
-    panes["x"] = pane("x", AgentState.BLOCKED)
-    panes["y"] = pane("y", AgentState.BLOCKED, focused=True)
-    assert next_attention_target(panes, slots, settled(*panes.values())) == "z"
+    live["x"] = pane("x", AgentState.BLOCKED)
+    live["y"] = pane("y", AgentState.BLOCKED, focused=True)
+    assert next_attention_target(live, order, settled(*live.values())) == "z"
 
-    panes["y"] = pane("y", AgentState.BLOCKED)
-    panes["z"] = pane("z", AgentState.BLOCKED, focused=True)
-    assert next_attention_target(panes, slots, settled(*panes.values())) == "x", "wraps"
-
-
-def test_blocked_is_targetable_at_once_despite_a_long_settle_window():
-    panes = {"a": pane("a", AgentState.BLOCKED)}
-    slots = SlotMap({0: "a"})
-    settler = Settler(999)
-    settler.observe("a", AgentState.BLOCKED, 0.0)  # no tick: nothing has settled
-    assert next_attention_target(panes, slots, settler) == "a"
+    live["y"] = pane("y", AgentState.BLOCKED)
+    live["z"] = pane("z", AgentState.BLOCKED, focused=True)
+    assert next_attention_target(live, order, settled(*live.values())) == "x", "wraps"
 
 
-def test_a_pane_that_has_not_settled_yet_is_not_a_target():
-    panes = {"a": pane("a", AgentState.DONE)}
-    slots = SlotMap({0: "a"})
-    settler = Settler(999)
-    settler.observe("a", AgentState.DONE, 0.0)
-    assert next_attention_target(panes, slots, settler) is None
+def test_the_queue_wraps_over_the_agents_there_are_not_the_twelve_slots():
+    # Two agents, the second focused: the wrap must come back to the first
+    # rather than walking ten empty slots and falling off the end.
+    order = ["a", "b"]
+    live = panes(pane("a", AgentState.BLOCKED), pane("b", AgentState.BLOCKED, focused=True))
+    assert next_attention_target(live, order, settled(*live.values())) == "a"
 
 
-# -- key presses ---------------------------------------------------------
-
-
-@pytest.mark.parametrize("slot", [0, 7, 11])
-def test_press_resolves_to_the_pane_in_that_slot(slot):
-    panes = {"a": pane("a", AgentState.IDLE)}
-    assert pane_for_slot(slot, panes, SlotMap({slot: "a"})) == "a"
-
-
-def test_press_on_an_empty_or_stale_slot_resolves_to_nothing():
-    assert pane_for_slot(3, {}, SlotMap()) is None
-    assert pane_for_slot(3, {}, SlotMap({3: "gone"})) is None
-
-
-@pytest.mark.parametrize("slot", FEATURE_SLOTS)
-def test_no_feature_key_is_an_agent_slot(slot):
-    # Even a slot map that somehow binds one -- an older state file, a hand edit
-    # -- must not turn a feature key into an agent key under a finger.
-    assert pane_for_slot(slot, {"a": pane("a", AgentState.IDLE)}, SlotMap({slot: "a"})) is None
-
-
-def test_the_feature_row_is_in_every_frame():
-    # The mic key is not a status light: it is there whether or not Herdr is
-    # reachable, because dictation has nothing to do with Herdr.
-    for connected in (True, False):
-        frame = render({}, SlotMap(), Settler(), connected=connected)
-        assert frame.keys[MIC_SLOT] == MIC
-        assert frame.keys[14] == EMPTY, "14 is the last spare, and dark"
-
-
-def test_the_repo_key_says_whether_there_is_a_page():
-    for connected in (True, False):
-        with_page = render({}, SlotMap(), Settler(), connected=connected, repo_page=True)
-        without = render({}, SlotMap(), Settler(), connected=connected, repo_page=False)
-        assert with_page.keys[REPO_SLOT] == REPO_PAGE
-        assert without.keys[REPO_SLOT] == REPO_NO_PAGE
-
-
-def test_the_repo_key_is_never_dark():
-    # Dark would be indistinguishable from the spare key beside it, and from a
-    # board with nothing behind it. "No page here" is a state, not an absence.
-    for repo_page in (True, False):
-        frame = render({}, SlotMap(), Settler(), connected=True, repo_page=repo_page)
-        assert frame.keys[REPO_SLOT] != EMPTY
+def test_an_agent_past_the_grid_cannot_be_jumped_to():
+    ids = [f"w{n}:p1" for n in range(13)]
+    states = [AgentState.WORKING] * 12 + [AgentState.BLOCKED]
+    live = panes(*(pane(i, s) for i, s in zip(ids, states)))
+    assert next_attention_target(live, ids, settled(*live.values())) is None, (
+        "the thirteenth agent has no key, so the function key cannot send you to it"
+    )

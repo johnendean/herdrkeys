@@ -60,8 +60,6 @@ def doctor(config: Config) -> int:
     for ignored in location.shadowed:
         ok = False
         print(f"                 IGNORING {ignored} -- two config files, only the first is read")
-    print(f"slot map         {config.state_path}{'' if config.state_path.exists() else '  (absent, will be created)'}")
-
     print(f"herdr socket     {socket_path}", end="  ")
     try:
         snapshot = herdr.snapshot(socket_path)
