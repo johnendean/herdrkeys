@@ -34,6 +34,7 @@ class PaneRecord:
     state: AgentState
     revision: int
     cwd: str | None = None
+    colour: str | None = None
 
     @property
     def is_agent_pane(self) -> bool:
@@ -47,6 +48,32 @@ def _state_of(raw: Any) -> AgentState:
         return AgentState.UNKNOWN
 
 
+def _colour_of(pane: dict[str, Any]) -> str | None:
+    """The project colour herdrcolor reported for this pane, if any.
+
+    It rides along on the pane payloads herdrkeys already fetches, as
+    `tokens.color`, so reading it costs nothing and needs no agreement with
+    that plugin beyond the name of the field. Anything that is not a `#rrggbb`
+    string is treated as absent: a key falling back to its state colour is the
+    designed answer to "no colour here", so a malformed one need not be an
+    error (ADR 0010).
+    """
+    tokens = pane.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    colour = tokens.get("color")
+    if not isinstance(colour, str):
+        return None
+    colour = colour.strip()
+    if len(colour) != 7 or not colour.startswith("#"):
+        return None
+    try:
+        int(colour[1:], 16)
+    except ValueError:
+        return None
+    return colour.lower()
+
+
 def _record_from_pane(pane: dict[str, Any]) -> PaneRecord:
     return PaneRecord(
         pane_id=pane["pane_id"],
@@ -57,19 +84,29 @@ def _record_from_pane(pane: dict[str, Any]) -> PaneRecord:
         # own. They agree for an agent pane, and `cwd` survives the agent
         # exiting, so it is the one asked first.
         cwd=pane.get("cwd") or pane.get("foreground_cwd"),
+        colour=_colour_of(pane),
     )
 
 
-def _keeping_cwd(record: PaneRecord, existing: PaneRecord | None) -> PaneRecord:
-    """Carry a known directory across an update that does not mention one.
+def _keeping_known(record: PaneRecord, existing: PaneRecord | None) -> PaneRecord:
+    """Carry what we already know across an update that does not mention it.
 
-    Herdr omits `cwd` from some pane payloads. Taking the new record whole
-    would blank it, and the repo key would do nothing until the next payload
-    that happened to include it.
+    Herdr omits `cwd` from some pane payloads, and `tokens` from others. Taking
+    the new record whole would blank them, and the repo key would do nothing --
+    or a key would drop back to its state colour -- until the next payload that
+    happened to include one.
+
+    Absence is therefore read as silence, never as a retraction. Neither field
+    is ever cleared here; a pane's colour goes away when the pane does.
     """
-    if record.cwd is None and existing is not None and existing.cwd is not None:
-        return replace(record, cwd=existing.cwd)
-    return record
+    if existing is None:
+        return record
+    carried = {}
+    if record.cwd is None and existing.cwd is not None:
+        carried["cwd"] = existing.cwd
+    if record.colour is None and existing.colour is not None:
+        carried["colour"] = existing.colour
+    return replace(record, **carried) if carried else record
 
 
 class HerdrState:
@@ -118,7 +155,7 @@ class HerdrState:
                 # Hold the high-water revision, so a `pane_updated` replayed
                 # after this poll cannot overwrite it through the guard below.
                 record = replace(record, revision=max(record.revision, existing.revision))
-            self.panes[record.pane_id] = _keeping_cwd(record, existing)
+            self.panes[record.pane_id] = _keeping_known(record, existing)
             if row.get("focused"):
                 focused = record.pane_id
             else:
@@ -168,7 +205,7 @@ class HerdrState:
         existing = self.panes.get(record.pane_id)
         if existing is not None and not force and record.revision < existing.revision:
             return  # backlog replay: an update older than what we already hold
-        self.panes[record.pane_id] = _keeping_cwd(record, existing)
+        self.panes[record.pane_id] = _keeping_known(record, existing)
         if pane.get("focused"):
             self.focused_pane_id = record.pane_id
 
@@ -216,6 +253,7 @@ class HerdrState:
                 state=records[pane_id].state,
                 focused=pane_id == self.focused_pane_id,
                 cwd=records[pane_id].cwd,
+                colour=records[pane_id].colour,
             )
             for pane_id in listed + unlisted
         }

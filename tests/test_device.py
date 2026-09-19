@@ -52,3 +52,20 @@ def test_a_blank_frame_still_carries_the_feature_row():
     frame = Frame.blank(connected=True)
     assert frame.keys[MIC_SLOT] == MIC
     assert frame.keys.endswith("f")
+
+
+def test_a_frame_with_no_colours_is_byte_for_byte_what_it_always_was():
+    # The protocol version does not move for this, so a board running older
+    # firmware has to keep working. It does, because without herdrcolor there
+    # is nothing to send: the field is absent, not null.
+    frame = Frame("i" + "-" * 11 + "mn-f")
+    assert b'"c"' not in encode_frame(frame)
+
+
+def test_colours_ride_on_the_frame_itself():
+    frame = Frame("i" + "-" * 11 + "mn-f", ("#a6e3a1",) + (None,) * 15)
+    payload = json.loads(encode_frame(frame))
+    assert payload["k"] == frame.keys
+    assert payload["c"][0] == "#a6e3a1"
+    assert payload["c"][1] is None
+    assert len(payload["c"]) == 16, "one entry per key, so a frame stays absolute"

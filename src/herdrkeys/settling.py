@@ -22,9 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .model import AgentState
+from .model import AgentPane, AgentState
 
 DEFAULT_SETTLE_SECONDS = 0.3
+
+# The settled grid: the agents on the keys, in key order, each with the colour
+# it wears when idle. A pair rather than a bare pane ID so that a recolour is
+# settled by the same mechanism as a reorder -- see `OrderSettler`.
+Grid = tuple[tuple[str, "str | None"], ...]
 
 
 class Settler:
@@ -82,7 +87,14 @@ class Settler:
 
 
 class OrderSettler:
-    """Hold a change in the agent order until it stops moving.
+    """Hold a change in the grid until it stops moving.
+
+    What settles here is the ordered list of `(pane_id, colour)` pairs: which
+    agent is on which key, and what colour that key wears when idle. Colour
+    rides with the order rather than settling on its own because herdrcolor
+    recolours a project when a *different* project appears or goes away, so a
+    colour change is something an unrelated agent did -- the same shape of
+    event as a reorder, and it must not flicker for the same reason (ADR 0010).
 
     The keys mirror the order `agent.list` returns (ADR 0009), so a single poll
     that omits an agent does not just darken one key -- it renumbers every key
@@ -104,11 +116,11 @@ class OrderSettler:
 
     def __init__(self, settle_seconds: float = DEFAULT_SETTLE_SECONDS) -> None:
         self.settle_seconds = settle_seconds
-        self._committed: tuple[str, ...] = ()
-        self._pending: tuple[tuple[str, ...], float] | None = None
+        self._committed: Grid = ()
+        self._pending: tuple[Grid, float] | None = None
 
-    def observe(self, order: Iterable[str], now: float) -> None:
-        candidate = tuple(order)
+    def observe(self, panes: Iterable[AgentPane], now: float) -> None:
+        candidate = tuple((pane.pane_id, pane.colour) for pane in panes)
         if candidate == self._committed:
             self._pending = None
             return
@@ -123,8 +135,8 @@ class OrderSettler:
             self._committed = candidate
             self._pending = None
 
-    def settled(self) -> tuple[str, ...]:
-        """The order safe to render. Empty until the first one has held still."""
+    def settled(self) -> Grid:
+        """The grid safe to render. Empty until the first one has held still."""
         return self._committed
 
     def next_deadline(self, now: float) -> float | None:

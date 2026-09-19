@@ -37,6 +37,24 @@ SWATCH = {
 }
 
 
+def identity_ansi(colour: str | None) -> str | None:
+    """A `#rrggbb` project colour as 24-bit ANSI, or None if it is not one.
+
+    Shown raw, without the saturation the firmware applies: a terminal is not
+    an LED, and pretending otherwise would make this a worse preview, not a
+    better one. What the TUI can show is *which* key wears *which* colour; only
+    the board can settle whether two of them are far enough apart.
+    """
+    if not colour or len(colour) != 7 or not colour.startswith("#"):
+        return None
+    try:
+        int(colour[1:], 16)
+    except ValueError:
+        return None
+    r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+    return f"\x1b[38;2;{r};{g};{b}m"
+
+
 def draw(frame: Frame) -> str:
     """The frame as a 4x4 grid, key 0 bottom-left, numbering along each row."""
     lines = []
@@ -47,6 +65,16 @@ def draw(frame: Frame) -> str:
             slot = row * 4 + column
             code = frame.keys[slot]
             colour, label = SWATCH.get(code, ("", code))
+            # `idle` and `done` wear a project colour, exactly as on the
+            # board: the TUI is a preview of the keypad, so it must not show a
+            # key a colour the keypad would not. What it cannot show is the
+            # blink that tells those two apart -- the grid is redrawn per
+            # frame, not animated -- so the state letter is doing that work
+            # here in a way it does not have to on the board.
+            if code.lower() in ("i", "d"):
+                identity = identity_ansi(frame.colours[slot])
+                if identity is not None:
+                    colour = identity
             cells.append(f"{colour}[{slot:>2} {code} {label:<8}]{RESET}")
         lines.append(" ".join(cells))
     return "\n".join(lines)

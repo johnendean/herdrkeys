@@ -21,17 +21,43 @@ below move up, exactly as they do on screen, so the key to press is the one in
 the position you can already see. The key's colour is that agent's lifecycle
 state:
 
-| State     | Colour            | Meaning |
-| --------- | ----------------- | ------- |
-| `idle`    | dim green         | ready for input |
-| `working` | amber             | busy |
-| `blocked` | red, **blinking** | waiting on you: an approval or a question |
-| `done`    | bright green      | finished work you have not looked at yet |
-| `unknown` | dim blue          | an agent is there but Herdr cannot classify it |
+| State     | Colour                      | Meaning |
+| --------- | --------------------------- | ------- |
+| `idle`    | its project's colour, dim   | ready for input |
+| `working` | amber                       | busy |
+| `blocked` | red, **blinking**           | waiting on you: an approval or a question |
+| `done`    | its project's colour, bright, **blinking** | finished work you have not looked at yet |
+| `unknown` | dim blue                    | an agent is there but Herdr cannot classify it |
 
-Focus is shown by **brightness**, never by hue, so a colour only ever means one
-thing. Motion is reserved for `blocked`, so movement never becomes background
-noise.
+Focus is shown by **brightness**, never by hue. Motion means one thing:
+
+> If a key is **moving**, that agent wants you.
+
+|            | steady — needs nothing | blinking — wants you |
+| ---------- | ---------------------- | -------------------- |
+| **whose**  | `idle` — project colour | `done` — project colour |
+| **what**   | `working` — amber       | `blocked` — red |
+
+The two that blink are exactly the two the function key jumps to, so the board
+reads in two passes. Anything moving needs you, and its hue says which kind:
+your project's colour for work finished and unseen, red for an agent stopped
+and waiting. Anything steady needs nothing, and its hue says whether it is
+yours and idle, or merely busy.
+
+So hue carries identity where knowing *which* agent is the useful thing, and
+state where what is happening matters more than whose it is. That matters more
+than it sounds, because the keys renumber as agents come and go -- the colour is
+what tells you which key is which. `unknown` keeps its dim blue: a fault report,
+not an agent at work.
+
+`idle` and `done` share a hue, and are never mistakable: done is seven times
+brighter and it is the only one of the two that moves.
+
+The colours come from
+[herdrcolor](https://github.com/johnendean/herdrcolor), which colours projects
+in Herdr's sidebar and publishes the hex for tools like this one. Without that
+plugin every idle key is dim green, exactly as before -- and `doctor` will say
+so, since the board cannot.
 
 Press a key to focus that agent -- and to raise the terminal, because focusing
 an agent you cannot see is not focusing it.
@@ -134,7 +160,7 @@ already running `doctor` reports the port as in use rather than probing it.
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 189 tests, no keypad and no running Herdr required
+make test   # 216 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -228,6 +254,14 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
 - Herdr's event backlog is bounded, rate-limited, and not a complete history,
   which is why the daemon reconciles against `session.snapshot` rather than
   trusting the stream, and ignores replayed events entirely. See ADR 0002.
+- The Catppuccin pastels herdrcolor uses cannot be shown raw: scaled to idle
+  brightness their channel spread is 6-12 counts out of 25, and green against
+  teal differs by one -- six dim whites. The firmware saturates them first,
+  which puts the closest pair 12 counts apart. See ADR 0010.
+- `working` briefly breathed its project colour (ADR 0011) and was reverted a
+  day later after testing it on the board: motion spread across the busy states
+  does not make a board more informative, it makes the one key that matters
+  harder to find. ADR 0012 records what that cost and bought.
 - Keys are positions in Herdr's agent list rather than bindings an agent keeps.
   ADR 0002 chose the opposite and ADR 0009 supersedes it: the memory that turned
   out to matter is the position you can see on screen, not a key an agent

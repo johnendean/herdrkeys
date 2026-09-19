@@ -326,22 +326,22 @@ class Daemon:
 
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
-        # The settled order, which is the one the keys were drawn from. Reading
+        # The settled grid, which is the one the keys were drawn from. Reading
         # the live order here would mean a press landing on an agent that is
         # not yet under that key.
-        order = self.order.settled()
+        grid = self.order.settled()
         if slot == REPO_SLOT:
             self._open_repo()
             return
         if slot == FN_SLOT:
-            target = reducer.next_attention_target(agent_panes, order, self.settler)
+            target = reducer.next_attention_target(agent_panes, grid, self.settler)
             if target is None:
                 if self.device is not None:
                     self.device.flash()  # heard you; nothing wants you
                 return
             self._focus(target)
             return
-        pane_id = reducer.pane_for_slot(slot, agent_panes, order)
+        pane_id = reducer.pane_for_slot(slot, agent_panes, grid)
         if pane_id is not None:
             self._focus(pane_id)
 
@@ -365,11 +365,11 @@ class Daemon:
             self.settler.observe(pane_id, pane.state, now)
         self.settler.retain(live)
         self.settler.tick(now)
-        # Which key each agent is, settled on the same clock as what each key
-        # shows: the order is Herdr's list order, so one poll that omits an
-        # agent would otherwise renumber every key below it and renumber them
-        # back half a second later.
-        self.order.observe(agent_panes, now)
+        # Which key each agent is and what colour it wears, settled on the same
+        # clock as what each key shows: the order is Herdr's list order, so one
+        # poll that omits an agent would otherwise renumber every key below it
+        # and renumber them back half a second later.
+        self.order.observe(agent_panes.values(), now)
         self.order.tick(now)
         focused = self._focused_pane()
         # Read from `.git/config`, never `git` itself: this runs on every pass
