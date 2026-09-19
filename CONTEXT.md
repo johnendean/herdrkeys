@@ -58,13 +58,31 @@ leaving the list frees its key and the agents after it move up; one appearing
 above another moves it down. No agent owns a key, nothing is remembered between
 runs, and a dark key in the grid is a free key.
 
+**Project colour** — The colour herdrcolor gives a project, worn by a key whose
+agent is `idle` or `done` — the two states where which agent it is matters more
+than what it is doing. A
+**project** there is a directory's name, so two agents in one repository share a
+colour and a worktree is its own project. An agent has one only while that
+plugin is installed and has reported since the pane appeared; a key with none
+shows its agent state instead, which is what every key did before the plugin
+existed. It is not an *agent* colour: nothing colours agents.
+
+**Blinking** — What a key does when its agent wants you: `done` and `blocked`,
+which are exactly the states the function key walks. Nothing else on the grid
+moves, so movement can be read before colour is.
+
 **Frame** — One complete description of what all 16 keys should show: a
-16-character string, one character per key. A frame is absolute, never a delta,
-so any frame fully determines the keypad's appearance.
+16-character string, one character per key, and a **project colour** per key
+where there is one. A frame is absolute, never a delta, so any frame fully
+determines the keypad's appearance. The characters carry meaning and the device
+decides what each one looks like; the colours are data, because what colour a
+project is cannot be worked out on the board.
 
 **Settling** — Holding a change briefly before it reaches a frame, so that the
 flapping Herdr emits while an agent starts does not reach the LEDs. Two things
-settle: what a key shows, and the **key order**. A transition into `blocked` is
+settle: what a key shows, and the **key order** — which carries each key's
+**project colour**, since a recolour is something an unrelated agent did, and
+flickers for the same reasons a reorder would. A transition into `blocked` is
 never settled.
 
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the

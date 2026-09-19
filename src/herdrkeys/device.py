@@ -40,7 +40,17 @@ class Device(Protocol):
 
 
 def encode_frame(frame: Frame) -> bytes:
-    return json.dumps({"v": PROTOCOL_VERSION, "t": "frame", "k": frame.keys}).encode() + b"\n"
+    """`c` is omitted entirely when no key has a colour.
+
+    So a board sees exactly the bytes it saw before herdrcolor existed whenever
+    that plugin is absent, and the protocol version does not move: the field is
+    additive in both directions, old firmware ignoring it and new firmware
+    reading its absence as "no colours" (ADR 0010).
+    """
+    message: dict[str, Any] = {"v": PROTOCOL_VERSION, "t": "frame", "k": frame.keys}
+    if any(colour is not None for colour in frame.colours):
+        message["c"] = list(frame.colours)
+    return json.dumps(message).encode() + b"\n"
 
 
 def encode_flash(slot: int | None = None) -> bytes:

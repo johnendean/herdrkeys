@@ -9,7 +9,7 @@ import sys
 import os
 import subprocess
 
-from . import activate, discovery, herdr, provision
+from . import activate, discovery, herdr, herdr_state, provision
 from .config import Config
 from .paths import resolve_config
 from .daemon import PROCESS_MARKER, Daemon
@@ -49,6 +49,24 @@ def running_daemon_pid() -> int | None:
     return None
 
 
+def _colour_report(agent_panes: list[dict]) -> str:
+    """How many agents carry a project colour, and what that means for the keys."""
+    if not agent_panes:
+        return "no agents to colour"
+    coloured = [p for p in agent_panes if herdr_state._colour_of(p) is not None]
+    if not coloured:
+        return (
+            f"none of {len(agent_panes)} agents; idle keys use agent state "
+            "(install herdrcolor, or run its sync)"
+        )
+    if len(coloured) == len(agent_panes):
+        return f"all {len(agent_panes)} agents; idle keys wear their project colour"
+    return (
+        f"{len(coloured)} of {len(agent_panes)} agents; the rest fall back to "
+        "agent state (herdrcolor may not have synced since they appeared)"
+    )
+
+
 def doctor(config: Config) -> int:
     """Report on everything the daemon depends on, without changing anything."""
     ok = True
@@ -61,13 +79,23 @@ def doctor(config: Config) -> int:
         ok = False
         print(f"                 IGNORING {ignored} -- two config files, only the first is read")
     print(f"herdr socket     {socket_path}", end="  ")
+    agents: list[dict] = []
+    reachable = True
     try:
         snapshot = herdr.snapshot(socket_path)
         agents = [p for p in (snapshot.get("panes") or []) if p.get("agent")]
         print(f"ok  ({len(snapshot.get('panes') or [])} panes, {len(agents)} agent panes)")
     except (OSError, herdr.HerdrError) as exc:
         ok = False
+        reachable = False
         print(f"UNREACHABLE  ({exc})")
+
+    if reachable:
+        # A key showing its state colour and a key whose agent has no project
+        # colour look identical on the board, by design -- so this is the only
+        # place the difference can be seen. Not a failure either way: no
+        # colours is what herdrkeys did before herdrcolor existed.
+        print(f"colours          {_colour_report(agents)}")
 
     ports = discovery.find_ports()
     if not ports:

@@ -100,18 +100,18 @@ def test_stale_backlog_updates_never_overwrite_newer_state():
 def test_end_to_end_from_recording_to_frame():
     state = folded()
     panes = state.agent_panes()
-    order = list(panes)
+    grid = tuple((pane_id, pane.colour) for pane_id, pane in panes.items())
 
     settler = Settler(0.3)
     for pane_id, pane in panes.items():
         settler.observe(pane_id, pane.state, 0.0)
     settler.tick(0.0)
-    assert render(panes, order, settler, connected=True).keys == "-" * 12 + "mn-f", (
+    assert render(panes, grid, settler, connected=True).keys == "-" * 12 + "mn-f", (
         "nothing has settled yet, so the grid is still dark"
     )
 
     settler.tick(1.0)
-    frame = render(panes, order, settler, connected=True)
+    frame = render(panes, grid, settler, connected=True)
     assert frame.keys == "wW" + "-" * 10 + "mn-f", (
         "w1:p1 working in slot 0, w2:p1 working and focused in slot 1"
     )
@@ -156,3 +156,35 @@ def test_an_agent_herdr_has_not_listed_yet_still_gets_a_key():
     state.apply_agents([{"pane_id": "w6:p1", "agent": "claude", "agent_status": "idle"}])
     state.apply_event({"data": {"type": "pane_agent_detected", "pane_id": "w2:p9", "agent": "claude"}})
     assert list(state.agent_panes()) == ["w6:p1", "w2:p9"], "listed agents first, in Herdr's order"
+
+
+def test_a_project_colour_is_read_off_the_panes_herdr_already_sends():
+    # herdrcolor publishes it as `tokens.color`, which rides along on payloads
+    # herdrkeys already fetches -- so no extra call, and no dependency on that
+    # plugin beyond the name of the field.
+    state = HerdrState()
+    state.apply_agents([{
+        "pane_id": "w6:p1", "agent": "claude", "agent_status": "idle",
+        "tokens": {"c4": "sevenbyseven", "color": "#89B4FA"},
+    }])
+    assert state.agent_panes()["w6:p1"].colour == "#89b4fa"
+
+
+def test_a_pane_payload_without_tokens_keeps_the_colour_it_had():
+    # Herdr omits `tokens` from some payloads, exactly as it omits `cwd`.
+    # Reading that as a retraction would drop the key back to green until the
+    # next payload that happened to carry it.
+    state = HerdrState()
+    state.apply_agents([{"pane_id": "w6:p1", "agent": "claude", "agent_status": "idle",
+                         "tokens": {"color": "#89b4fa"}}])
+    state.apply_event({"data": {"type": "pane_updated", "pane": {
+        "pane_id": "w6:p1", "agent": "claude", "agent_status": "working", "revision": 9}}})
+    assert state.agent_panes()["w6:p1"].colour == "#89b4fa"
+
+
+def test_a_colour_that_is_not_one_is_treated_as_absent():
+    for bad in ({"color": "green"}, {"color": "#12345"}, {"color": 5}, {}, None):
+        state = HerdrState()
+        state.apply_agents([{"pane_id": "w6:p1", "agent": "claude",
+                             "agent_status": "idle", "tokens": bad}])
+        assert state.agent_panes()["w6:p1"].colour is None, bad

@@ -1,7 +1,29 @@
 import pytest
 
-from herdrkeys.model import AgentState
+from herdrkeys.model import AgentPane, AgentState
 from herdrkeys.settling import OrderSettler, Settler
+
+
+def panes(*specs):
+    """Agent panes for the settler, named `"id"` or `("id", "#rrggbb")`."""
+    out = []
+    for spec in specs:
+        pane_id, colour = spec if isinstance(spec, tuple) else (spec, None)
+        out.append(
+            AgentPane(
+                pane_id=pane_id,
+                agent="claude",
+                state=AgentState.IDLE,
+                focused=False,
+                colour=colour,
+            )
+        )
+    return out
+
+
+def grid(*specs):
+    """The settled form of the same: pane id and the colour it wears when idle."""
+    return tuple(spec if isinstance(spec, tuple) else (spec, None) for spec in specs)
 
 
 def test_nothing_is_renderable_until_it_settles():
@@ -69,12 +91,12 @@ def test_retain_forgets_panes_that_are_gone():
 
 def test_the_order_is_not_renderable_until_it_holds_still():
     order = OrderSettler(0.3)
-    order.observe(["a", "b"], 0.0)
+    order.observe(panes("a", "b"), 0.0)
     assert order.settled() == (), "no keys at all rather than keys that are about to move"
     order.tick(0.1)
     assert order.settled() == ()
     order.tick(0.35)
-    assert order.settled() == ("a", "b")
+    assert order.settled() == grid("a", "b")
 
 
 def test_one_poll_that_omits_an_agent_does_not_renumber_the_board():
@@ -82,39 +104,64 @@ def test_one_poll_that_omits_an_agent_does_not_renumber_the_board():
     # immediately, so a single blip would shuffle every key below it and shuffle
     # them back on the next poll.
     order = OrderSettler(0.3)
-    order.observe(["a", "b", "c"], 0.0)
+    order.observe(panes("a", "b", "c"), 0.0)
     order.tick(0.3)
-    assert order.settled() == ("a", "b", "c")
+    assert order.settled() == grid("a", "b", "c")
 
-    order.observe(["a", "c"], 0.5)  # the blip
+    order.observe(panes("a", "c"), 0.5)  # the blip
     order.tick(0.6)
-    order.observe(["a", "b", "c"], 1.0)  # and gone again
+    order.observe(panes("a", "b", "c"), 1.0)  # and gone again
     order.tick(1.1)
-    assert order.settled() == ("a", "b", "c"), "nobody moved"
+    assert order.settled() == grid("a", "b", "c"), "nobody moved"
 
 
 def test_a_real_departure_commits_once_it_stops_moving():
     order = OrderSettler(0.3)
-    order.observe(["a", "b", "c"], 0.0)
+    order.observe(panes("a", "b", "c"), 0.0)
     order.tick(0.3)
-    order.observe(["a", "c"], 0.5)
+    order.observe(panes("a", "c"), 0.5)
     order.tick(0.9)
-    assert order.settled() == ("a", "c")
+    assert order.settled() == grid("a", "c")
 
 
 def test_returning_to_the_committed_order_cancels_the_wait():
     order = OrderSettler(0.3)
-    order.observe(["a", "b"], 0.0)
+    order.observe(panes("a", "b"), 0.0)
     order.tick(0.3)
-    order.observe(["b", "a"], 0.4)
-    order.observe(["a", "b"], 0.5)
+    order.observe(panes("b", "a"), 0.4)
+    order.observe(panes("a", "b"), 0.5)
     assert order.next_deadline(0.5) is None, "nothing pending, so nothing to wake for"
     order.tick(0.9)
-    assert order.settled() == ("a", "b")
+    assert order.settled() == grid("a", "b")
 
 
 def test_the_loop_is_told_when_to_wake_for_a_pending_order():
     order = OrderSettler(0.3)
     assert order.next_deadline(0.0) is None
-    order.observe(["a"], 1.0)
+    order.observe(panes("a"), 1.0)
     assert order.next_deadline(1.1) == pytest.approx(0.2)
+
+
+def test_a_recolour_settles_like_a_reorder():
+    # herdrcolor recolours a project when a colliding project appears or goes
+    # away, so a key can change colour because of an agent somewhere else.
+    order = OrderSettler(0.3)
+    order.observe(panes(("a", "#a6e3a1"), "b"), 0.0)
+    order.tick(0.3)
+    assert order.settled() == grid(("a", "#a6e3a1"), "b")
+
+    order.observe(panes(("a", "#89b4fa"), "b"), 0.5)
+    assert order.settled() == grid(("a", "#a6e3a1"), "b"), "not yet"
+    order.tick(0.9)
+    assert order.settled() == grid(("a", "#89b4fa"), "b")
+
+
+def test_a_colour_that_flickers_never_reaches_the_board():
+    order = OrderSettler(0.3)
+    order.observe(panes(("a", "#a6e3a1")), 0.0)
+    order.tick(0.3)
+    order.observe(panes(("a", "#89b4fa")), 0.5)
+    order.tick(0.6)
+    order.observe(panes(("a", "#a6e3a1")), 0.7)
+    order.tick(1.2)
+    assert order.settled() == grid(("a", "#a6e3a1")), "nothing moved"

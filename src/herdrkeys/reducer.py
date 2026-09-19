@@ -6,30 +6,35 @@ test any of it.
 
 Keys are positions in Herdr's agent list, not bindings an agent holds: the first
 agent Herdr lists is key 0, the second key 1, and so on (ADR 0009). Nothing here
-remembers anything -- the order is an argument, so the whole grid is a function
+remembers anything -- the grid is an argument, so the whole board is a function
 of what Herdr says right now.
+
+A grid entry is a pane and the project colour it wears when idle. The colour is
+passed through rather than interpreted: which states wear it is the device's
+decision, because that is a question about what a state looks like (ADR 0010).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
 from .model import (
     AGENT_SLOTS,
+    SLOT_COUNT,
     AgentPane,
     AgentState,
     Frame,
     feature_keys,
     state_code,
 )
-from .settling import Settler
+from .settling import Grid, Settler
 
 # Attention order for the function key: `blocked` has a human waiting on it,
 # `done` finished unseen, everything else does not want you.
 ATTENTION_ORDER = (AgentState.BLOCKED, AgentState.DONE)
 
 
-def on_the_grid(order: Iterable[str]) -> list[str]:
+def on_the_grid(grid: Grid) -> list[tuple[str, str | None]]:
     """The prefix of the agent list the grid has room for.
 
     Past twelve agents the rest are simply not on the board, and not reachable
@@ -38,12 +43,16 @@ def on_the_grid(order: Iterable[str]) -> list[str]:
     nothing regresses here; it is just now the last in Herdr's order that misses
     out rather than the last to arrive.
     """
-    return list(order)[: len(AGENT_SLOTS)]
+    return list(grid)[: len(AGENT_SLOTS)]
+
+
+def pane_ids(grid: Iterable[tuple[str, str | None]]) -> list[str]:
+    return [pane_id for pane_id, _colour in grid]
 
 
 def render(
     agent_panes: dict[str, AgentPane],
-    order: Sequence[str],
+    grid: Grid,
     settler: Settler,
     *,
     connected: bool,
@@ -56,10 +65,11 @@ def render(
     Herdr, a keypad, or a checkout on disk.
     """
     keys = feature_keys(connected=connected, repo_page=repo_page)
-    for slot, pane_id in enumerate(on_the_grid(order)):
+    colours: list[str | None] = [None] * SLOT_COUNT
+    for slot, (pane_id, colour) in enumerate(on_the_grid(grid)):
         pane = agent_panes.get(pane_id)
         if pane is None:
-            # In the settled order but no longer an agent: the order has not
+            # In the settled grid but no longer an agent: the grid has not
             # caught up yet. Leave a hole for the moment rather than shifting
             # every key below it twice.
             continue
@@ -67,12 +77,17 @@ def render(
         if state is None:
             continue  # not settled yet: stay dark rather than strobe
         keys[slot] = state_code(state, focused=pane.focused)
-    return Frame("".join(keys))
+        # Sent whenever the agent has one, for every state. Which states
+        # actually wear it is the device's call: "what does idle look like" is
+        # exactly the question the device is there to answer, and answering it
+        # here would put the look of a key in two places (ADR 0010).
+        colours[slot] = colour
+    return Frame("".join(keys), tuple(colours))
 
 
 def next_attention_target(
     agent_panes: dict[str, AgentPane],
-    order: Sequence[str],
+    grid: Grid,
     settler: Settler,
 ) -> str | None:
     """The pane the function key should focus, or None if nothing wants you.
@@ -84,7 +99,7 @@ def next_attention_target(
     twelve slots: with no holes left to skip, the two are the same walk, and
     counting agents means the queue is right however few there are.
     """
-    on_grid = on_the_grid(order)
+    on_grid = pane_ids(on_the_grid(grid))
     if not on_grid:
         return None
 
@@ -107,14 +122,14 @@ def next_attention_target(
 
 
 def pane_for_slot(
-    slot: int, agent_panes: dict[str, AgentPane], order: Sequence[str]
+    slot: int, agent_panes: dict[str, AgentPane], grid: Grid
 ) -> str | None:
     """The pane a key press should focus, or None if that key holds nothing.
 
     A feature-row slot falls out of this naturally: the grid is at most twelve
     long, so 12 to 15 are always past its end.
     """
-    on_grid = on_the_grid(order)
+    on_grid = pane_ids(on_the_grid(grid))
     if slot < 0 or slot >= len(on_grid):
         return None
     pane_id = on_grid[slot]

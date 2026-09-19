@@ -82,17 +82,36 @@ class AgentPane:
     # Where the pane is, so the repo key can ask git about it. Absent when
     # Herdr has not reported one, which is a normal answer, not an error.
     cwd: str | None = None
+    # The project colour herdrcolor reported for this pane, `#rrggbb`. Absent
+    # when that plugin is not installed, or has not synced since this pane
+    # appeared -- both normal, and both mean the key falls back to its state
+    # colour. See ADR 0010.
+    colour: str | None = None
 
 
 @dataclass(frozen=True)
 class Frame:
-    """What all 16 keys should show. Absolute, never a delta."""
+    """What all 16 keys should show. Absolute, never a delta.
+
+    `keys` carries meaning and `colours` carries data. The device decides what
+    `blocked` looks like; it cannot decide what colour a project is, because
+    that is not a meaning -- it is a fact about the world that only the host can
+    know. So identity crosses the wire as hex and states do not (ADR 0010).
+
+    Both live on one message so a frame stays absolute: there is no way for a
+    key's colour and its meaning to arrive out of step.
+    """
 
     keys: str
+    colours: tuple[str | None, ...] = (None,) * SLOT_COUNT
 
     def __post_init__(self) -> None:
         if len(self.keys) != SLOT_COUNT:
             raise ValueError(f"frame must be {SLOT_COUNT} chars, got {len(self.keys)!r}")
+        if len(self.colours) != SLOT_COUNT:
+            raise ValueError(
+                f"frame must carry {SLOT_COUNT} colours, got {len(self.colours)!r}"
+            )
 
     @classmethod
     def blank(cls, *, connected: bool, repo_page: bool = False) -> Frame:

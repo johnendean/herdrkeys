@@ -274,7 +274,8 @@ def test_the_two_repo_states_are_told_apart_without_motion(firmware):
     # Brighter, not a different hue: the difference is one of degree, and a
     # second hue here would start competing with the agent states.
     assert sum(page) > sum(none)
-    # Neither animates. Motion stays reserved for `blocked` and the mic latch.
+    # Neither animates: on the grid, movement means an agent wants you, and
+    # this key has nothing to want. ADR 0012.
     for code in (REPO_PAGE, REPO_NO_PAGE):
         over_a_cycle = {firmware["colour_for"](code, now + t, REPO_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
         assert len(over_a_cycle) == 1
@@ -291,3 +292,119 @@ def test_a_repo_key_with_no_page_still_flashes_when_pressed(firmware):
     # git knows more -- so the failure signal has to work in this state too.
     firmware["handle"]({"t": "flash", "k": REPO_SLOT})
     assert firmware["colour_for"](REPO_NO_PAGE, time.monotonic(), REPO_SLOT) == firmware["FN_FLASH"]
+
+
+# -- project colours on the LEDs ------------------------------------------
+
+
+def test_an_idle_key_wears_its_project_colour(firmware):
+    firmware["frame"] = "i" + "-" * 11 + MIC + "--f"
+    firmware["frame_colours"] = ["#a6e3a1"] + [None] * 15
+    idle_green = firmware["BASE"]["i"]
+    assert firmware["colour_for"]("i", 0.0, 0) != idle_green
+    assert firmware["colour_for"]("i", 0.0, 1) == idle_green, "no colour, no change"
+
+
+def test_what_is_happening_owns_the_hue_on_working_and_blocked(firmware):
+    # `working` and `blocked` say what is going on, not whose it is. `unknown`
+    # is a fault report, not an agent at work. ADR 0012.
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    # `blocked` blinks, so it is asked at a moment it is lit rather than at
+    # t=0, which lands in its dark half.
+    for code, when in (("w", 0.0), ("b", 0.5), ("u", 0.0)):
+        assert firmware["colour_for"](code, when, 0) == firmware["BASE"][code], (
+            f"{code} keeps its state colour"
+        )
+
+
+def test_working_is_steady_amber(firmware):
+    # It breathed its project colour for exactly one day; see ADR 0012.
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    samples = {firmware["colour_for"]("w", t / 40, 0) for t in range(80)}
+    assert samples == {firmware["BASE"]["w"]}, "one colour, and it does not move"
+
+
+def test_done_wears_the_project_colour_and_blinks(firmware):
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    samples = [firmware["colour_for"]("d", t / 40, 0) for t in range(80)]
+    lit = [s for s in samples if s != (0, 0, 0)]
+    assert (0, 0, 0) in samples, "it blinks"
+    assert lit and firmware["BASE"]["d"] not in lit, "and it is not state green any more"
+
+    firmware["frame_colours"] = None
+    plain = [firmware["colour_for"]("d", t / 40, 0) for t in range(80)]
+    assert firmware["BASE"]["d"] in plain, "without a colour it is bright green, as it was"
+    assert (0, 0, 0) in plain, "and it blinks either way: the blink is the state"
+
+
+def test_only_the_states_that_want_you_move(firmware):
+    # The whole scheme in one assertion: motion means come here. If a third
+    # state ever starts moving, it stops meaning that.
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    window = [t / 40 for t in range(80)]
+    moving = {
+        code
+        for code in ("i", "w", "b", "d", "u")
+        if len({firmware["colour_for"](code, t, 0) for t in window}) > 1
+    }
+    assert moving == {"b", "d"}, "exactly the two the function key jumps to"
+
+
+def test_idle_and_done_share_a_hue_but_never_read_alike(firmware):
+    # Both wear the project colour, so brightness and motion carry the rest.
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    idle = firmware["colour_for"]("i", 0.0, 0)
+    done_lit = max(
+        (firmware["colour_for"]("d", t / 40, 0) for t in range(80)), key=max
+    )
+    assert max(done_lit) > max(idle) * 4, "done is far brighter"
+    assert (0, 0, 0) not in {firmware["colour_for"]("i", t / 40, 0) for t in range(80)}
+
+
+def test_an_identity_colour_is_no_brighter_than_the_idle_it_replaces(firmware):
+    # Otherwise a coloured idle key and a plain one would read as two states.
+    firmware["frame_colours"] = ["#a6e3a1"] * 16
+    level = firmware["BASE"]["i"][1]
+    for hexcolour in ("#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#cba6f7", "#94e2d5"):
+        assert max(firmware["identity_rgb"](hexcolour)) == level
+
+
+def test_the_palette_stays_apart_once_saturated(firmware):
+    # Raw, these pastels land within a few counts of neutral at idle duty --
+    # green against teal differs by one. Saturation is what keeps them apart,
+    # so assert the separation rather than the constant that produces it.
+    palette = ("#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#cba6f7", "#94e2d5")
+    rendered = [firmware["identity_rgb"](c) for c in palette]
+    for first in range(len(rendered)):
+        for second in range(first + 1, len(rendered)):
+            apart = sum(abs(a - b) for a, b in zip(rendered[first], rendered[second]))
+            assert apart >= 6, f"{palette[first]} and {palette[second]} are indistinguishable"
+
+
+def test_focus_still_brightens_a_coloured_key(firmware):
+    firmware["frame_colours"] = ["#89b4fa"] * 16
+    unfocused = firmware["colour_for"]("i", 0.0, 0)
+    focused = firmware["colour_for"]("I", 0.0, 0)
+    assert max(focused) > max(unfocused), "focus is brightness, whatever the hue"
+
+
+def test_nonsense_falls_back_to_the_state_colour(firmware):
+    for bad in (None, "", "green", "#12345", "#gggggg", "#000000"):
+        firmware["frame_colours"] = [bad] * 16
+        assert firmware["colour_for"]("i", 0.0, 0) == firmware["BASE"]["i"], (
+            f"{bad!r} must not blank the key"
+        )
+
+
+def test_a_frame_without_colours_clears_the_last_ones(firmware):
+    # A host that has stopped reporting colours, or one older than herdrcolor,
+    # must not leave the previous frame's colours painted on the board.
+    firmware["handle"]({"t": "frame", "k": "i" * 16, "c": ["#a6e3a1"] * 16})
+    assert firmware["frame_colours"] == ["#a6e3a1"] * 16
+    firmware["handle"]({"t": "frame", "k": "i" * 16})
+    assert firmware["frame_colours"] is None
+
+
+def test_a_malformed_colour_list_is_ignored_whole(firmware):
+    firmware["handle"]({"t": "frame", "k": "i" * 16, "c": ["#a6e3a1"]})
+    assert firmware["frame_colours"] is None, "sixteen or nothing, like the frame itself"
