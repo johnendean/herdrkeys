@@ -11,6 +11,7 @@ from herdrkeys.model import (
     FEATURE_SLOTS,
     FN_SLOT,
     MIC_SLOT,
+    RETURN_SLOT,
     REPO_NO_PAGE,
     REPO_PAGE,
     REPO_SLOT,
@@ -95,6 +96,15 @@ def test_pressing_the_mic_key_does_nothing_on_the_host(rig):
     load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
 
     instance.handle_press(MIC_SLOT)
+    assert focused == [] and device.flashes == 0
+
+
+def test_pressing_the_return_key_does_nothing_on_the_host(rig):
+    # Same as the microphone: the board types it, and the host stays out of it.
+    instance, device, focused, _ = rig
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
+
+    instance.handle_press(RETURN_SLOT)
     assert focused == [] and device.flashes == 0
 
 

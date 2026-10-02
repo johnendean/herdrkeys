@@ -1,7 +1,7 @@
 import json
 
 from herdrkeys.device import FakeDevice, decode_presses, encode_flash, encode_frame, encode_hello
-from herdrkeys.model import MIC, MIC_SLOT, PROTOCOL_VERSION, Frame
+from herdrkeys.model import MIC, MIC_SLOT, PROTOCOL_VERSION, RETURN, RETURN_SLOT, Frame
 
 
 def test_frames_are_absolute_so_a_dropped_byte_self_heals():
@@ -51,6 +51,7 @@ def test_fake_device_records_what_the_daemon_would_have_shown():
 def test_a_blank_frame_still_carries_the_feature_row():
     frame = Frame.blank(connected=True)
     assert frame.keys[MIC_SLOT] == MIC
+    assert frame.keys[RETURN_SLOT] == RETURN
     assert frame.keys.endswith("f")
 
 
@@ -58,12 +59,12 @@ def test_a_frame_with_no_colours_is_byte_for_byte_what_it_always_was():
     # The protocol version does not move for this, so a board running older
     # firmware has to keep working. It does, because without herdrcolor there
     # is nothing to send: the field is absent, not null.
-    frame = Frame("i" + "-" * 11 + "mn-f")
+    frame = Frame("i" + "-" * 11 + "menf")
     assert b'"c"' not in encode_frame(frame)
 
 
 def test_colours_ride_on_the_frame_itself():
-    frame = Frame("i" + "-" * 11 + "mn-f", ("#a6e3a1",) + (None,) * 15)
+    frame = Frame("i" + "-" * 11 + "menf", ("#a6e3a1",) + (None,) * 15)
     payload = json.loads(encode_frame(frame))
     assert payload["k"] == frame.keys
     assert payload["c"][0] == "#a6e3a1"
