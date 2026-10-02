@@ -100,12 +100,12 @@ def test_every_character_a_frame_can_carry_has_a_swatch():
 
 
 def test_an_idle_key_is_drawn_in_its_project_colour():
-    frame = Frame("i" + "-" * 11 + "mn-f", ("#a6e3a1",) + (None,) * 15)
+    frame = Frame("i" + "-" * 11 + "menf", ("#a6e3a1",) + (None,) * 15)
     assert "\x1b[38;2;166;227;161m" in draw(frame)
 
 
 def test_a_done_key_is_drawn_in_it_too():
-    frame = Frame("d" + "-" * 11 + "mn-f", ("#a6e3a1",) + (None,) * 15)
+    frame = Frame("d" + "-" * 11 + "menf", ("#a6e3a1",) + (None,) * 15)
     assert "\x1b[38;2;166;227;161m" in draw(frame)
 
 
@@ -113,5 +113,5 @@ def test_the_states_that_say_what_is_happening_are_not():
     # The TUI is a preview of the keypad, so it must not show a key a colour
     # the keypad would not.
     for code in ("w", "b", "u"):
-        frame = Frame(code + "-" * 11 + "mn-f", ("#a6e3a1",) + (None,) * 15)
+        frame = Frame(code + "-" * 11 + "menf", ("#a6e3a1",) + (None,) * 15)
         assert "\x1b[38;2;166;227;161m" not in draw(frame), code

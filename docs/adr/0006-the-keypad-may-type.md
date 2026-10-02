@@ -112,3 +112,23 @@ the next tap.
 The firmware's decisions are tested in `tests/test_firmware.py`, which executes
 the module body against stand-in CircuitPython libraries. A stuck modifier is the
 worst thing this board can do to a machine, so each way it lets go has a test.
+
+## Amendment, 2026-10-02: a second keystroke, Return
+
+"Only one keystroke" no longer holds. Slot 13 is now the **return key**, typing
+Return, and the repo key moves from 13 to 14, so the feature row has no spare.
+It exists for the same flow as the microphone -- speak, then send -- and sits
+beside it for that reason.
+
+It is built the same way, for the same reasons: the host puts `e` in the slot,
+the firmware decides that means `Keycode.ENTER`, and the key goes inert with the
+daemon. It is pressed and released at once rather than held for as long as the
+finger is down, so there is no auto-repeat and nothing new that can get stuck.
+
+The one new decision is what it does while the microphone is open. With Right
+Option down, Return would arrive as an Option chord; and even with the modifier
+let go first, Flow inserts its text some time after it stops listening, so the
+Return would land ahead of it and send the prompt empty. So a press while the
+microphone is open closes the microphone and types nothing, and the next press
+sends. Waiting for the text on the board was the alternative, and the board
+cannot see when it lands.

@@ -47,7 +47,8 @@ as fit; an agent past the twelfth in the agent list is not on the board and the
 function key cannot reach it.
 
 **Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
-key**, 13 the **repo key**, 15 the **function key**, and 14 is spare. Which row
+key**, 13 the **return key**, 14 the **repo key** and 15 the **function key**.
+None is spare. Which row
 this is physically depends on how the board is turned, which only the device
 knows. There is no "function row": the row is the feature row, and the function
 key is one key in it.
@@ -88,7 +89,7 @@ never settled.
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the
 only key that shows whether the daemon can see Herdr at all.
 
-**Repo key** — Slot 13. Opens the repository of whichever agent is focused,
+**Repo key** — Slot 14. Opens the repository of whichever agent is focused,
 in a browser. It follows focus rather than holding a repository of its own, so
 what it opens changes as you move around, and it shows whether the agent it is
 following has a **page** before you press it. Never dark: "no page here" is a
@@ -104,10 +105,16 @@ Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next
 tap. The frame says which key it is; the firmware decides which keystroke that
 means, exactly as it decides what `blocked` looks like.
 
+**Return key** — Slot 13, beside the microphone key. Types Return, for sending
+what was just dictated. It is the second half of dictation rather than a key of
+its own, which is why it sits where it does and wears the microphone's hue. While
+the microphone is open, a press closes it and types nothing: the dictated text
+has not landed yet, and Return then would send the prompt without it.
+
 **Latch** — The microphone held open with no finger on the key. It pulses while
 latched, and ends on a second tap, on a five-minute timeout, or on anything that
 would otherwise release the key.
 
 **Daemon** — The host process. It is the only component that talks to Herdr, and
 the only component that decides anything; the keypad renders frames, reports key
-presses, and types the one keystroke the microphone key stands for.
+presses, and types the keystrokes the microphone and return keys stand for.

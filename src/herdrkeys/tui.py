@@ -14,7 +14,7 @@ import sys
 import termios
 import tty
 
-from .model import EMPTY, FN_DISCONNECTED, MIC, SLOT_COUNT, Frame
+from .model import EMPTY, FN_DISCONNECTED, MIC, RETURN, SLOT_COUNT, Frame
 
 RESET = "\x1b[0m"
 
@@ -34,6 +34,7 @@ SWATCH = {
     "f": ("\x1b[38;5;245m", "fn"),
     FN_DISCONNECTED: ("\x1b[38;5;124m", "offline"),
     MIC: ("\x1b[38;5;44m", "mic"),
+    RETURN: ("\x1b[38;5;30m", "return"),
 }
 
 

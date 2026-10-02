@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import MIC, REPO_NO_PAGE, REPO_PAGE, REPO_SLOT
+from herdrkeys.model import MIC, MIC_SLOT, REPO_NO_PAGE, REPO_PAGE, REPO_SLOT, RETURN, RETURN_SLOT
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 
@@ -36,9 +36,11 @@ class FakeKeyboard:
 
     def __init__(self, devices):
         self.held = []
+        self.pressed = []  # every key that ever went down, in order
 
     def press(self, code):
         self.held.append(code)
+        self.pressed.append(code)
 
     def release(self, code):
         if code in self.held:
@@ -58,7 +60,7 @@ def _stub_modules(*, hid: bool):
         modules["adafruit_hid"] = types.SimpleNamespace()
         modules["adafruit_hid.keyboard"] = types.SimpleNamespace(Keyboard=FakeKeyboard)
         modules["adafruit_hid.keycode"] = types.SimpleNamespace(
-            Keycode=types.SimpleNamespace(RIGHT_ALT="RIGHT_ALT")
+            Keycode=types.SimpleNamespace(RIGHT_ALT="RIGHT_ALT", ENTER="ENTER")
         )
     return modules
 
@@ -80,7 +82,7 @@ def load(monkeypatch, *, hid=True):
 @pytest.fixture
 def firmware(monkeypatch):
     fw = load(monkeypatch)
-    fw["frame"] = "-" * 12 + MIC + "--f"
+    fw["frame"] = "-" * 12 + MIC + RETURN + "nf"
     fw["frame_at"] = 0.0
     return fw
 
@@ -208,12 +210,66 @@ def test_a_board_with_no_hid_library_still_lights_up(monkeypatch):
     fw = load(monkeypatch, hid=False)
     assert fw["keyboard"] is None
 
-    fw["frame"] = "-" * 12 + MIC + "--f"
+    fw["frame"] = "-" * 12 + MIC + RETURN + "nf"
     fw["frame_at"] = 0.0
     fw["mic_pressed"](12, 0.0)
     fw["mic_released"](0.1)
     fw["paint"](0.2)
     assert fw["mic_slot"] is None, "nothing was ever held, so nothing is stuck"
+
+
+# -- the return key -------------------------------------------------------
+
+
+def test_the_firmware_answers_to_the_return_character_the_host_sends(firmware):
+    assert firmware["RETURN_CODE"] == RETURN
+
+
+def test_the_return_key_types_return_and_lets_go(firmware):
+    firmware["return_pressed"](RETURN_SLOT)
+    assert firmware["keyboard"].pressed == ["ENTER"]
+    assert held(firmware) == [], "a tap, never a held key that would repeat"
+
+
+def test_return_while_the_microphone_is_held_closes_it_and_types_nothing(firmware):
+    # Flow has not inserted the text yet, and Right Option is still down: a
+    # Return now would be an Option chord sending an empty prompt.
+    firmware["mic_pressed"](MIC_SLOT, 0.0)
+    firmware["return_pressed"](RETURN_SLOT)
+    assert held(firmware) == []
+    assert "ENTER" not in firmware["keyboard"].pressed
+
+
+def test_return_while_the_microphone_is_latched_closes_it_and_types_nothing(firmware):
+    firmware["mic_pressed"](MIC_SLOT, 0.0)
+    firmware["mic_released"](0.1)
+    firmware["return_pressed"](RETURN_SLOT)
+    assert held(firmware) == [] and not firmware["mic_latched"]
+    assert "ENTER" not in firmware["keyboard"].pressed
+
+    firmware["return_released"]()
+    firmware["return_pressed"](RETURN_SLOT)
+    assert firmware["keyboard"].pressed[-1] == "ENTER", "the next press sends"
+
+
+def test_the_return_key_is_a_dimmer_steady_cyan_that_brightens_while_held(firmware):
+    now = time.monotonic()
+    idle = firmware["colour_for"](RETURN, now, RETURN_SLOT)
+    assert idle == firmware["RETURN_IDLE"]
+    assert idle[0] == 0 and idle[1] == idle[2], "the microphone's hue"
+    assert sum(idle) < sum(firmware["MIC_IDLE"]), "the microphone stays the brighter of the two"
+    over_a_cycle = {firmware["colour_for"](RETURN, now + t, RETURN_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
+    assert over_a_cycle == {idle}, "the return key does not animate"
+
+    firmware["return_pressed"](RETURN_SLOT)
+    assert firmware["colour_for"](RETURN, now, RETURN_SLOT) == firmware["RETURN_HELD"]
+    firmware["return_released"]()
+    assert firmware["colour_for"](RETURN, now, RETURN_SLOT) == idle
+
+
+def test_a_board_with_no_hid_library_shrugs_off_the_return_key(monkeypatch):
+    fw = load(monkeypatch, hid=False)
+    fw["return_pressed"](RETURN_SLOT)  # must not raise
 
 
 # -- the repository key ---------------------------------------------------
@@ -282,7 +338,7 @@ def test_the_two_repo_states_are_told_apart_without_motion(firmware):
 
 
 def test_neither_repo_state_is_dark(firmware):
-    # Dark would read as the spare key beside it, or as no daemon at all.
+    # Dark would read as no daemon at all.
     for code in (REPO_PAGE, REPO_NO_PAGE):
         assert firmware["colour_for"](code, time.monotonic(), REPO_SLOT) != firmware["OFF"]
 
@@ -298,7 +354,7 @@ def test_a_repo_key_with_no_page_still_flashes_when_pressed(firmware):
 
 
 def test_an_idle_key_wears_its_project_colour(firmware):
-    firmware["frame"] = "i" + "-" * 11 + MIC + "--f"
+    firmware["frame"] = "i" + "-" * 11 + MIC + RETURN + "nf"
     firmware["frame_colours"] = ["#a6e3a1"] + [None] * 15
     idle_green = firmware["BASE"]["i"]
     assert firmware["colour_for"]("i", 0.0, 0) != idle_green
