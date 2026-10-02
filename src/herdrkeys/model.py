@@ -15,7 +15,8 @@ SLOT_COUNT = 16
 # Which row it is physically depends on ROTATION, which only the device knows.
 FN_SLOT = 15
 MIC_SLOT = 12
-REPO_SLOT = 13
+RETURN_SLOT = 13  # beside the microphone, because it sends what was just dictated
+REPO_SLOT = 14
 FEATURE_SLOTS = (12, 13, 14, 15)
 AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: slot n is the nth agent
 
@@ -38,9 +39,10 @@ EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
 MIC = "m"  # the device decides what a microphone key emits, and what it looks like
+RETURN = "e"  # ...and the same for the return key
 # The repo key, in its two states: the focused agent's directory has a page, or
-# it does not. Both are lit -- dark would be indistinguishable from the spare
-# key beside it -- and the device decides how far apart they look.
+# it does not. Both are lit -- dark would read as a board with no daemon behind
+# it -- and the device decides how far apart they look.
 REPO_PAGE = "r"
 REPO_NO_PAGE = "n"
 
@@ -66,6 +68,7 @@ def feature_keys(*, connected: bool, repo_page: bool = False) -> list[str]:
     """
     keys = [EMPTY] * SLOT_COUNT
     keys[MIC_SLOT] = MIC
+    keys[RETURN_SLOT] = RETURN
     keys[REPO_SLOT] = REPO_PAGE if repo_page else REPO_NO_PAGE
     keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return keys

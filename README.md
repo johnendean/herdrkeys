@@ -7,7 +7,7 @@ a running [Herdr](https://herdr.dev) session. The LEDs show what every agent is
 doing; the keys jump to them.
 
 ```
-[12 m mic    ] [13 r repo   ] [14 -        ] [15 f fn      ]   <- the feature row
+[12 m mic    ] [13 e return ] [14 r repo   ] [15 f fn      ]   <- the feature row
 [ 8 -        ] [ 9 -        ] [10 -        ] [11 -         ]
 [ 4 -        ] [ 5 -        ] [ 6 -        ] [ 7 -         ]
 [ 0 w working] [ 1 B blocked] [ 2 i idle   ] [ 3 -         ]
@@ -87,7 +87,14 @@ The keystroke comes from the board itself rather than from the daemon, so it
 needs no Accessibility permission -- but the daemon is what tells the board which
 key it is, so a keypad showing "no host" will not dictate either.
 
-The **repo key** (slot 13) opens the focused agent's repository in a browser. It
+The **return key** (slot 13) sits beside it and types Return, so sending what
+you just dictated is the key next to the one you dictated with. It is a dimmer
+cyan than the microphone -- the two are one tool -- and brightens while pressed.
+**Pressed while the microphone is open, it closes the microphone and types
+nothing**: Flow has not inserted the text yet, and a Return then would send the
+prompt without it. Press again once the text is there.
+
+The **repo key** (slot 14) opens the focused agent's repository in a browser. It
 follows focus rather than remembering a repository of its own, so what it opens
 is whatever you are looking at. Any remote that names a host works -- GitHub,
 GitLab, Bitbucket, a forge of your own -- because the rewrite from `git@host:o/r`
@@ -95,8 +102,8 @@ to `https://host/o/r` is the same everywhere; there is no list of supported
 hosts to be missing from.
 
 **Bright violet means there is a page; dim violet means there is not** -- so you
-know before you press, and the key is never dark, which would read as the spare
-key beside it. It changes as you move between agents.
+know before you press, and the key is never dark, which would read as no daemon
+at all. It changes as you move between agents.
 
 That colour is read straight out of `.git/config` rather than by running git:
 the frame is rebuilt on every pass of the loop, at least twice a second, and
@@ -109,8 +116,6 @@ Reading the file understands plain remotes and not git's `include.path` or
 nothing. The key therefore under-promises rather than over-promises: it can be
 dim somewhere that still opens. A press that genuinely finds nothing flashes
 *that* key, the way the function key flashes when nothing wants you.
-
-Slot 14 is spare and stays dark.
 
 ## Install
 

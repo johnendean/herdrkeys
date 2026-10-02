@@ -9,7 +9,8 @@ It owns the palette and the animation, because a frame carries meaning
 decided here and nowhere else. The same goes for the microphone key: the host
 says which key it is, this file says that holding it means holding Right Option,
 which is what Wispr Flow listens for, and that a tap latches it open until the
-next tap.
+next tap. Likewise the return key: the host says which key it is, this file
+types Return.
 
 Wire protocol, newline-delimited JSON on the usb_cdc data channel:
 
@@ -38,12 +39,14 @@ try:
 
     keyboard = Keyboard(usb_hid.devices)
     DICTATION_KEY = Keycode.RIGHT_ALT
+    RETURN_KEY = Keycode.ENTER
 except Exception:
     keyboard = None
     DICTATION_KEY = None
+    RETURN_KEY = None
 
 PROTOCOL = 1
-FIRMWARE = "herdrkeys-device/0.6.0"
+FIRMWARE = "herdrkeys-device/0.7.0"
 
 # --- palette ---------------------------------------------------------------
 # Focus is shown by brightness, never by hue.
@@ -106,9 +109,17 @@ FN_IDLE = (34, 44, 34)      # function key, daemon connected
 MIC_IDLE = (0, 26, 26)
 MIC_OPEN = (0, 160, 200)
 
+# The return key, beside the microphone. It wears the microphone's cyan because
+# it is the second half of the same act -- speak, then send -- and dimmer, so
+# the microphone stays the key the eye finds first. Brighter while held, as an
+# acknowledgement, and never animated: nothing here ever wants you.
+RETURN_CODE = "e"
+RETURN_IDLE = (0, 12, 12)
+RETURN_HELD = (0, 80, 100)
+
 # The repository key, in its two states. Violet is unused by every agent state
 # and by the microphone. Both states are lit: dark would be indistinguishable
-# from the spare key beside it, and from a board with no daemon behind it.
+# from a board with no daemon behind it.
 #
 # Brightness rather than hue separates them, because the difference is one of
 # degree -- there is a page, or there is not -- and because a second hue here
@@ -192,6 +203,7 @@ mic_slot = None         # the slot holding the dictation key down, if any
 mic_pressed_at = 0.0    # when it went down, to tell a tap from a hold
 mic_latched = False     # held with no finger on it, until tapped again
 mic_latched_at = 0.0    # when the latch started, so it cannot run forever
+return_down = None      # the return key's slot while a finger is on it
 
 
 def clamp(value):
@@ -301,6 +313,34 @@ def mic_released(now):
     release_mic()
 
 
+def return_pressed(slot):
+    """A press on the return key: close an open microphone, or type Return.
+
+    Never both. While the microphone is open Flow has not yet inserted what it
+    heard, so a Return sent now would send the prompt without it -- and with
+    Right Option still down it would not even be a Return. Closing the
+    microphone is the useful half; the second press, once the text is there,
+    sends it.
+    """
+    global return_down
+    return_down = slot
+    if mic_slot is not None:
+        release_mic()
+        return
+    if keyboard is None:
+        return
+    try:
+        keyboard.press(RETURN_KEY)
+        keyboard.release(RETURN_KEY)
+    except Exception:
+        pass  # a keystroke that will not go is not worth crashing the keypad
+
+
+def return_released():
+    global return_down
+    return_down = None
+
+
 def colour_for(code, now, slot):
     """The colour a key should be showing right now."""
     if code == "-":
@@ -319,6 +359,8 @@ def colour_for(code, now, slot):
         if not mic_latched:
             return MIC_OPEN
         return scaled(MIC_OPEN, breath(now, MIC_PULSE_SECONDS, 0.3))
+    if code == RETURN_CODE:
+        return RETURN_HELD if return_down == slot else RETURN_IDLE
     if code == "x":
         # Slow pulse: distinguishes "not connected" from "no agents", which
         # would otherwise both be sixteen dark keys.
@@ -426,12 +468,18 @@ while True:
         is_pressed = keys[key].pressed
         if is_pressed and not pressed_before[key]:
             send({"v": PROTOCOL, "t": "key", "k": slot})
-            # Every key reports its press; only this one also types. The host
+            # Every key reports its press; only these two also type. The host
             # ignores presses on keys it holds no agent for.
-            if frame is not None and (now - frame_at) <= HOST_TIMEOUT and frame[slot] == MIC_CODE:
-                mic_pressed(slot, now)
-        elif pressed_before[key] and not is_pressed and mic_slot == slot:
-            mic_released(now)
+            if frame is not None and (now - frame_at) <= HOST_TIMEOUT:
+                if frame[slot] == MIC_CODE:
+                    mic_pressed(slot, now)
+                elif frame[slot] == RETURN_CODE:
+                    return_pressed(slot)
+        elif pressed_before[key] and not is_pressed:
+            if mic_slot == slot:
+                mic_released(now)
+            if return_down == slot:
+                return_released()
         pressed_before[key] = is_pressed
 
     paint(now)

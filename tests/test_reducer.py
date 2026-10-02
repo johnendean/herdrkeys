@@ -7,6 +7,7 @@ from herdrkeys.model import (
     FN_CONNECTED,
     FN_DISCONNECTED,
     MIC,
+    RETURN,
     REPO_NO_PAGE,
     REPO_SLOT,
     AgentPane,
@@ -52,7 +53,7 @@ def settled(*agent_panes):
 def test_frame_is_one_character_per_key():
     live = panes(pane("a", AgentState.WORKING))
     frame = render(live, grid("a"), settled(*live.values()), connected=True)
-    assert frame.keys == "w" + EMPTY * 11 + MIC + REPO_NO_PAGE + EMPTY + FN_CONNECTED
+    assert frame.keys == "w" + EMPTY * 11 + MIC + RETURN + REPO_NO_PAGE + FN_CONNECTED
 
 
 def test_focus_is_shown_by_case_not_by_a_different_state():
