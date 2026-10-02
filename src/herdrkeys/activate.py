@@ -5,10 +5,19 @@ Herdr's focus moves somewhere off-screen. So a key press also activates the
 host terminal app.
 
 The app is found by walking up from a Herdr *client* process to the first
-`/Applications/*.app` ancestor -- the server is detached with ppid 1 and has no
-terminal above it, so it is useless for this. Verified on this machine as:
+ancestor that names an `/Applications/*.app` -- the server is detached with ppid
+1 and has no terminal above it, so it is useless for this. Verified on this
+machine as:
 
     herdr -> zsh -> login -> iTermServer-3.6.11 -> /Applications/iTerm.app
+
+and then, from iTerm 3.7, as:
+
+    herdr -> zsh -> login -f ... /Applications/iTerm.app/.../ShellLauncher
+          -> ~/Library/Application Support/iTerm2/iTermServer-3.7.2 -> launchd
+
+where the app is no ancestor at all, only an argument to `login`. So the bundle
+is looked for anywhere in an ancestor's command line, not just as the program.
 
 The walk can legitimately fail (a detached session, `--remote`, or no client
 attached at all), which is why config can name the app outright.
@@ -19,7 +28,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-_APP_PATH = re.compile(r"^(/Applications/.+?\.app)/")
+_APP_PATH = re.compile(r"(/Applications/[^/]+?\.app)/")
 
 
 def _processes() -> list[tuple[int, int, str]]:
@@ -63,7 +72,7 @@ def detect_host_app() -> str | None:
             if entry is None:
                 break
             ppid, command = entry
-            match = _APP_PATH.match(command)
+            match = _APP_PATH.search(command)
             if match:
                 return match.group(1)
             cursor = ppid
