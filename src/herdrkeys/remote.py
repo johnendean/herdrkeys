@@ -1,9 +1,9 @@
-"""Turning the git remote of a pane's directory into a page you can open.
+"""Turning the git remote of a pane's directory into somewhere you can go.
 
-Two halves, deliberately separated. `web_url` is pure string work and holds
-every decision worth arguing about, so it is tested exhaustively and needs no
-git, no network and no repository. `remote_url` and `open_url` are the I/O, and
-are as thin as they can be.
+Two halves, deliberately separated. `web_url` and `destination` are pure and
+hold every decision worth arguing about, so they are tested exhaustively and
+need no git, no network and no repository. `remote_url`, `open_pull_requests`
+and `open_url` are the I/O, and are as thin as they can be.
 
 The translation is host-agnostic on purpose. GitHub, GitLab, Bitbucket,
 Codeberg and most self-hosted forges all serve a repository at the same path
@@ -13,9 +13,11 @@ silently does nothing the first time it meets another.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 # git@host:owner/repo -- the scp-like syntax, which is not a URL and so cannot
@@ -230,6 +232,99 @@ def page_for(cwd: str | None, *, remote: str = "origin", timeout: float = 5.0) -
     if found is None:
         found = remote_url(cwd, remote=remote, timeout=timeout)
     return web_url(found)
+
+
+# -- pull requests ---------------------------------------------------------
+#
+# Asked of `gh`, on a press and never on a frame: it is a network round trip of
+# half a second on a good day. Everything here degrades to the page -- no `gh`,
+# not logged in, not GitHub, offline, slow -- so the key is never worse than it
+# was before it knew about pull requests. See ADR 0013.
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    url: str
+    head: str  # the branch it was opened from
+    # Opened from someone's fork. Its `head` names a branch in *their*
+    # repository, which shares nothing with ours but the name -- and forks are
+    # full of `main`s.
+    from_fork: bool = False
+
+
+def current_branch(cwd: str | None) -> str | None:
+    """The branch a directory has checked out, read from HEAD. No subprocess.
+
+    None on a detached HEAD, which is an answer rather than a failure: such a
+    checkout has no branch, so it has no pull request of its own.
+    """
+    if not cwd:
+        return None
+    git_dir = _git_dir(cwd)
+    if git_dir is None:
+        return None
+    try:
+        head = (git_dir / "HEAD").read_text().strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/heads/"
+    if not head.startswith(prefix):
+        return None
+    return head[len(prefix):] or None
+
+
+def open_pull_requests(page: str, *, timeout: float = 3.0) -> list[PullRequest] | None:
+    """Every open pull request on the repository at `page`, drafts included.
+
+    None means "could not find out", which the caller treats exactly as "there
+    are none". The repository is named outright from the page rather than left
+    for `gh` to infer from the checkout's remotes, so the pull requests are
+    always those of the repository the page is -- and `gh` never stops to ask
+    which remote is meant.
+    """
+    repo = page.split("://", 1)[-1]
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "list", "--repo", repo, "--state", "open",
+             "--limit", "100", "--json", "url,headRefName,isCrossRepository"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        rows = json.loads(result.stdout)
+        return [
+            PullRequest(url=row["url"], head=row["headRefName"], from_fork=bool(row["isCrossRepository"]))
+            for row in rows
+        ]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def destination(page: str, branch: str | None, pulls: list[PullRequest] | None) -> str:
+    """Where a press on the git key goes: the most specific place there is.
+
+    The branch's own pull request; failing that, the list of open ones; failing
+    that, the page. A pull request for some other branch is never opened on its
+    own, however few others there are -- it is not this agent's work. Nor is
+    one from a fork that happens to use the same branch name.
+
+    Only the first hundred open pull requests are seen. Past that, the agent's
+    own can be missed and the list is opened instead, which is the right page
+    to be on anyway.
+    """
+    if not pulls:
+        return page
+    for pull in pulls:
+        if branch is not None and pull.head == branch and not pull.from_fork:
+            return pull.url
+    return f"{page}/pulls"
 
 
 def open_url(url: str, *, timeout: float = 5.0) -> None:

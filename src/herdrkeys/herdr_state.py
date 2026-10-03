@@ -92,7 +92,7 @@ def _keeping_known(record: PaneRecord, existing: PaneRecord | None) -> PaneRecor
     """Carry what we already know across an update that does not mention it.
 
     Herdr omits `cwd` from some pane payloads, and `tokens` from others. Taking
-    the new record whole would blank them, and the repo key would do nothing --
+    the new record whole would blank them, and the git key would do nothing --
     or a key would drop back to its state colour -- until the next payload that
     happened to include one.
 
