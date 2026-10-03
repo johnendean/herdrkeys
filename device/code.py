@@ -117,7 +117,7 @@ RETURN_CODE = "e"
 RETURN_IDLE = (0, 12, 12)
 RETURN_HELD = (0, 80, 100)
 
-# The repository key, in its two states. Violet is unused by every agent state
+# The git key, in its two states. Violet is unused by every agent state
 # and by the microphone. Both states are lit: dark would be indistinguishable
 # from a board with no daemon behind it.
 #
@@ -125,10 +125,10 @@ RETURN_HELD = (0, 80, 100)
 # degree -- there is a page, or there is not -- and because a second hue here
 # would start competing with the agent states for meaning. Steady in both: this
 # key never animates, because nothing here ever wants you.
-REPO_CODE = "r"          # the focused agent's directory has a page
-REPO_NONE_CODE = "n"     # ...and this one does not
-REPO_IDLE = (45, 0, 70)
-REPO_NONE = (7, 0, 11)
+GIT_CODE = "r"          # the focused agent's directory has a page
+GIT_NONE_CODE = "n"     # ...and this one does not
+GIT_IDLE = (45, 0, 70)
+GIT_NONE = (7, 0, 11)
 
 # A press shorter than this latches the microphone open instead of closing it
 # with your finger; anything longer is an ordinary hold. Long enough not to fire
@@ -349,10 +349,10 @@ def colour_for(code, now, slot):
         if now < flash_until and flash_slot in (None, slot):
             return FN_FLASH
         return FN_IDLE
-    if code == REPO_CODE or code == REPO_NONE_CODE:
+    if code == GIT_CODE or code == GIT_NONE_CODE:
         if now < flash_until and flash_slot == slot:
             return FN_FLASH
-        return REPO_IDLE if code == REPO_CODE else REPO_NONE
+        return GIT_IDLE if code == GIT_CODE else GIT_NONE
     if code == MIC_CODE:
         if slot != mic_slot:
             return MIC_IDLE

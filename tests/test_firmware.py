@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import MIC, MIC_SLOT, REPO_NO_PAGE, REPO_PAGE, REPO_SLOT, RETURN, RETURN_SLOT
+from herdrkeys.model import MIC, MIC_SLOT, GIT_NO_PAGE, GIT_PAGE, GIT_SLOT, RETURN, RETURN_SLOT
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 
@@ -272,35 +272,35 @@ def test_a_board_with_no_hid_library_shrugs_off_the_return_key(monkeypatch):
     fw["return_pressed"](RETURN_SLOT)  # must not raise
 
 
-# -- the repository key ---------------------------------------------------
+# -- the git key ---------------------------------------------------
 
 
-def test_the_repo_key_answers_to_the_characters_the_host_sends(firmware):
+def test_the_git_key_answers_to_the_characters_the_host_sends(firmware):
     # Same drift risk as the microphone key: two constants, two files -- and
     # now two of them, either of which could go dark on its own.
-    assert firmware["REPO_CODE"] == REPO_PAGE
-    assert firmware["REPO_NONE_CODE"] == REPO_NO_PAGE
+    assert firmware["GIT_CODE"] == GIT_PAGE
+    assert firmware["GIT_NONE_CODE"] == GIT_NO_PAGE
 
 
-def test_the_repo_key_is_steady_and_unlike_every_other_feature_key(firmware):
+def test_the_git_key_is_steady_and_unlike_every_other_feature_key(firmware):
     now = time.monotonic()
-    repo = firmware["colour_for"](REPO_PAGE, now, REPO_SLOT)
+    repo = firmware["colour_for"](GIT_PAGE, now, GIT_SLOT)
 
-    assert repo == firmware["REPO_IDLE"]
+    assert repo == firmware["GIT_IDLE"]
     # Steady is the promise: it says the daemon is listening, not that there is
     # a page. Motion here would compete with `blocked` and with a latched mic.
-    over_a_cycle = {firmware["colour_for"](REPO_PAGE, now + t, REPO_SLOT) for t in (0.0, 0.3, 0.7, 1.1, 2.3)}
-    assert over_a_cycle == {repo}, "the repo key does not animate"
+    over_a_cycle = {firmware["colour_for"](GIT_PAGE, now + t, GIT_SLOT) for t in (0.0, 0.3, 0.7, 1.1, 2.3)}
+    assert over_a_cycle == {repo}, "the git key does not animate"
     assert repo not in (firmware["MIC_IDLE"], firmware["FN_IDLE"], firmware["NO_HOST"])
 
 
 def test_a_flash_naming_a_key_flashes_only_that_key(firmware):
-    firmware["handle"]({"t": "flash", "k": REPO_SLOT})
+    firmware["handle"]({"t": "flash", "k": GIT_SLOT})
     now = time.monotonic()
 
-    assert firmware["colour_for"](REPO_PAGE, now, REPO_SLOT) == firmware["FN_FLASH"]
+    assert firmware["colour_for"](GIT_PAGE, now, GIT_SLOT) == firmware["FN_FLASH"]
     assert firmware["colour_for"]("f", now, 15) == firmware["FN_IDLE"], (
-        "the function key must not answer for the repo key"
+        "the function key must not answer for the git key"
     )
 
 
@@ -311,7 +311,7 @@ def test_a_flash_naming_nothing_still_flashes_the_function_key(firmware):
     now = time.monotonic()
 
     assert firmware["colour_for"]("f", now, 15) == firmware["FN_FLASH"]
-    assert firmware["colour_for"](REPO_PAGE, now, REPO_SLOT) == firmware["REPO_IDLE"]
+    assert firmware["colour_for"](GIT_PAGE, now, GIT_SLOT) == firmware["GIT_IDLE"]
 
 
 def test_a_nonsense_flash_target_falls_back_to_the_function_key(firmware):
@@ -320,34 +320,34 @@ def test_a_nonsense_flash_target_falls_back_to_the_function_key(firmware):
         assert firmware["flash_slot"] is None
 
 
-def test_the_two_repo_states_are_told_apart_without_motion(firmware):
+def test_the_two_git_key_states_are_told_apart_without_motion(firmware):
     now = time.monotonic()
-    page = firmware["colour_for"](REPO_PAGE, now, REPO_SLOT)
-    none = firmware["colour_for"](REPO_NO_PAGE, now, REPO_SLOT)
+    page = firmware["colour_for"](GIT_PAGE, now, GIT_SLOT)
+    none = firmware["colour_for"](GIT_NO_PAGE, now, GIT_SLOT)
 
-    assert page == firmware["REPO_IDLE"] and none == firmware["REPO_NONE"]
+    assert page == firmware["GIT_IDLE"] and none == firmware["GIT_NONE"]
     assert page != none
     # Brighter, not a different hue: the difference is one of degree, and a
     # second hue here would start competing with the agent states.
     assert sum(page) > sum(none)
     # Neither animates: on the grid, movement means an agent wants you, and
     # this key has nothing to want. ADR 0012.
-    for code in (REPO_PAGE, REPO_NO_PAGE):
-        over_a_cycle = {firmware["colour_for"](code, now + t, REPO_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
+    for code in (GIT_PAGE, GIT_NO_PAGE):
+        over_a_cycle = {firmware["colour_for"](code, now + t, GIT_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
         assert len(over_a_cycle) == 1
 
 
-def test_neither_repo_state_is_dark(firmware):
+def test_neither_git_key_state_is_dark(firmware):
     # Dark would read as no daemon at all.
-    for code in (REPO_PAGE, REPO_NO_PAGE):
-        assert firmware["colour_for"](code, time.monotonic(), REPO_SLOT) != firmware["OFF"]
+    for code in (GIT_PAGE, GIT_NO_PAGE):
+        assert firmware["colour_for"](code, time.monotonic(), GIT_SLOT) != firmware["OFF"]
 
 
-def test_a_repo_key_with_no_page_still_flashes_when_pressed(firmware):
+def test_a_git_key_with_no_page_still_flashes_when_pressed(firmware):
     # Pressing it can still succeed -- the colour reads only the config file,
     # git knows more -- so the failure signal has to work in this state too.
-    firmware["handle"]({"t": "flash", "k": REPO_SLOT})
-    assert firmware["colour_for"](REPO_NO_PAGE, time.monotonic(), REPO_SLOT) == firmware["FN_FLASH"]
+    firmware["handle"]({"t": "flash", "k": GIT_SLOT})
+    assert firmware["colour_for"](GIT_NO_PAGE, time.monotonic(), GIT_SLOT) == firmware["FN_FLASH"]
 
 
 # -- project colours on the LEDs ------------------------------------------

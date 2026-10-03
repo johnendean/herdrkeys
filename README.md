@@ -94,7 +94,7 @@ cyan than the microphone -- the two are one tool -- and brightens while pressed.
 nothing**: Flow has not inserted the text yet, and a Return then would send the
 prompt without it. Press again once the text is there.
 
-The **repo key** (slot 14) opens the focused agent's repository in a browser. It
+The **git key** (slot 14) opens the focused agent's repository in a browser. It
 follows focus rather than remembering a repository of its own, so what it opens
 is whatever you are looking at. Any remote that names a host works -- GitHub,
 GitLab, Bitbucket, a forge of your own -- because the rewrite from `git@host:o/r`

@@ -16,11 +16,11 @@ from pathlib import Path
 
 from . import activate as activate_app
 from . import discovery, herdr, provision, reducer
-from . import repo as repo_module
+from . import remote as remote_module
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
 from .herdr_state import HerdrState
-from .model import FN_SLOT, REPO_SLOT, Frame
+from .model import FN_SLOT, GIT_SLOT, Frame
 from .paths import legacy_slot_map_path
 from .settling import OrderSettler, Settler
 
@@ -301,7 +301,7 @@ class Daemon:
             (pane for pane in self.state.agent_panes().values() if pane.focused), None
         )
 
-    def _open_repo(self) -> None:
+    def _open_git(self) -> None:
         """Open the focused agent's repository in a browser.
 
         Git is asked here and nowhere else. Resolving it on the render path
@@ -314,15 +314,15 @@ class Daemon:
         them is an error worth a log line every time you lean on the board.
         """
         focused = self._focused_pane()
-        url = repo_module.page_for(focused.cwd if focused else None)
+        url = remote_module.page_for(focused.cwd if focused else None)
         if url is None:
             if self.device is not None:
                 # This key, not the function key: flashing that would say
                 # "nothing wants your attention", a different statement.
-                self.device.flash(REPO_SLOT)
+                self.device.flash(GIT_SLOT)
             return
         log.info("opening %s", url)
-        repo_module.open_url(url)
+        remote_module.open_url(url)
 
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
@@ -330,8 +330,8 @@ class Daemon:
         # the live order here would mean a press landing on an agent that is
         # not yet under that key.
         grid = self.order.settled()
-        if slot == REPO_SLOT:
-            self._open_repo()
+        if slot == GIT_SLOT:
+            self._open_git()
             return
         if slot == FN_SLOT:
             target = reducer.next_attention_target(agent_panes, grid, self.settler)
@@ -375,13 +375,13 @@ class Daemon:
         # Read from `.git/config`, never `git` itself: this runs on every pass
         # of the loop, and a subprocess here would sit between every status
         # poll and the LEDs. Measured at 0.055ms against 14.2ms.
-        repo_page = repo_module.has_page(focused.cwd if focused else None)
+        git_page = remote_module.has_page(focused.cwd if focused else None)
         return reducer.render(
             agent_panes,
             self.order.settled(),
             self.settler,
             connected=self.stream is not None,
-            repo_page=repo_page,
+            git_page=git_page,
         )
 
     def _push(self, frame: Frame, now: float) -> None:

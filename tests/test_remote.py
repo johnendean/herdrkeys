@@ -6,7 +6,7 @@ string work, so it is tested exhaustively here rather than through a daemon.
 
 import pytest
 
-from herdrkeys.repo import has_page, page_for, remote_from_config, web_url
+from herdrkeys.remote import has_page, page_for, remote_from_config, web_url
 
 
 @pytest.mark.parametrize(
@@ -216,11 +216,11 @@ def test_git_is_asked_only_when_the_config_says_nothing(tmp_path, monkeypatch):
     # The config parser understands plain remotes and nothing else. Rather than
     # grow it into a git implementation, a press falls through to git, so the
     # key is never less capable than it was before it had a colour.
-    import herdrkeys.repo as repo_module
+    import herdrkeys.remote as remote_module
 
     asked = []
     monkeypatch.setattr(
-        repo_module,
+        remote_module,
         "remote_url",
         lambda cwd, **kw: asked.append(cwd) or "git@github.com:fallback/found.git",
     )
