@@ -266,6 +266,13 @@ def test_only_other_branches_pull_requests_means_the_list():
     assert destination(PAGE, "feature", [pull(7, "other")]) == f"{PAGE}/pulls"
 
 
+def test_a_forks_branch_of_the_same_name_is_not_ours():
+    # Someone's fork opened a pull request from their `main`. Ours is `main`
+    # too, and that pull request is still not this agent's work.
+    theirs = PullRequest(f"{PAGE}/pull/4", "main", from_fork=True)
+    assert destination(PAGE, "main", [theirs]) == f"{PAGE}/pulls"
+
+
 def test_no_open_pull_requests_means_the_page():
     assert destination(PAGE, "feature", []) == PAGE
 
@@ -327,11 +334,15 @@ def test_gh_is_asked_about_the_pages_repository_without_prompting(monkeypatch):
 
     def fake_run(argv, **kw):
         calls.append((argv, kw))
-        return Ran(stdout='[{"url": "%s/pull/9", "headRefName": "feature"}]' % PAGE)
+        return Ran(stdout='[{"url": "%s/pull/9", "headRefName": "feature", "isCrossRepository": false},'
+                          ' {"url": "%s/pull/4", "headRefName": "main", "isCrossRepository": true}]' % (PAGE, PAGE))
 
     monkeypatch.setattr(remote.subprocess, "run", fake_run)
 
-    assert open_pull_requests(PAGE) == [pull(9, "feature")]
+    assert open_pull_requests(PAGE) == [
+        pull(9, "feature"),
+        PullRequest(f"{PAGE}/pull/4", "main", from_fork=True),
+    ]
     argv, kw = calls[0]
     assert argv[:3] == ["gh", "pr", "list"]
     assert argv[argv.index("--repo") + 1] == "github.com/johnendean/herdrkeys"

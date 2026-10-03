@@ -246,6 +246,10 @@ def page_for(cwd: str | None, *, remote: str = "origin", timeout: float = 5.0) -
 class PullRequest:
     url: str
     head: str  # the branch it was opened from
+    # Opened from someone's fork. Its `head` names a branch in *their*
+    # repository, which shares nothing with ours but the name -- and forks are
+    # full of `main`s.
+    from_fork: bool = False
 
 
 def current_branch(cwd: str | None) -> str | None:
@@ -282,7 +286,7 @@ def open_pull_requests(page: str, *, timeout: float = 3.0) -> list[PullRequest] 
     try:
         result = subprocess.run(
             ["gh", "pr", "list", "--repo", repo, "--state", "open",
-             "--limit", "100", "--json", "url,headRefName"],
+             "--limit", "100", "--json", "url,headRefName,isCrossRepository"],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -295,7 +299,10 @@ def open_pull_requests(page: str, *, timeout: float = 3.0) -> list[PullRequest] 
         return None
     try:
         rows = json.loads(result.stdout)
-        return [PullRequest(url=row["url"], head=row["headRefName"]) for row in rows]
+        return [
+            PullRequest(url=row["url"], head=row["headRefName"], from_fork=bool(row["isCrossRepository"]))
+            for row in rows
+        ]
     except (ValueError, KeyError, TypeError):
         return None
 
@@ -305,12 +312,17 @@ def destination(page: str, branch: str | None, pulls: list[PullRequest] | None) 
 
     The branch's own pull request; failing that, the list of open ones; failing
     that, the page. A pull request for some other branch is never opened on its
-    own, however few others there are -- it is not this agent's work.
+    own, however few others there are -- it is not this agent's work. Nor is
+    one from a fork that happens to use the same branch name.
+
+    Only the first hundred open pull requests are seen. Past that, the agent's
+    own can be missed and the list is opened instead, which is the right page
+    to be on anyway.
     """
     if not pulls:
         return page
     for pull in pulls:
-        if branch is not None and pull.head == branch:
+        if branch is not None and pull.head == branch and not pull.from_fork:
             return pull.url
     return f"{page}/pulls"
 

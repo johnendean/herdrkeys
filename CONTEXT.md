@@ -103,7 +103,8 @@ outside a repository. A press that finds none is answered with a flash rather
 than treated as a failure.
 
 **Pull request** — An open pull request whose head is the branch the agent's
-directory has checked out. An agent has at most one that matters; a pull request
+directory has checked out, in that same repository: a fork's branch of the same
+name is someone else's work. An agent has at most one that matters; a pull request
 for some other branch is never *its* pull request, however few others there are.
 A draft counts. Only GitHub's are known about; elsewhere, and whenever finding
 out fails or is slow, the git key behaves as if there were none.

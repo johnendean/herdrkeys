@@ -365,7 +365,15 @@ class Daemon:
                 log.warning("git key lookup failed: %s", exc)
                 lookup.set_result(False)
 
-        self._spawn(work)
+        try:
+            self._spawn(work)
+        except RuntimeError as exc:
+            # The system would not give us a thread. Outside `work`, so nothing
+            # else would clear the lookup, and the daemon must outlive this.
+            log.warning("git key lookup could not start: %s", exc)
+            self._git_lookup = None
+            self._flash_git()
+            return
         self._collect_git_lookup()
 
     def _collect_git_lookup(self) -> None:

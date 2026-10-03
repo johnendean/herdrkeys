@@ -79,3 +79,6 @@ Opening the pull request list rather than the single pull request when it
 belongs to another branch is deliberate, even when it is the only one open. A
 pull request for some other branch is not the focused agent's work, and opening
 it would look like the key had found something it had not.
+The same goes for a pull request from a fork whose branch merely shares the
+name: forks are full of `main`s, so only pull requests from the repository
+itself can be the agent's own.

@@ -853,6 +853,25 @@ def test_a_lookup_that_crashes_does_not_leave_the_key_looking(git_rig, monkeypat
     assert device.flashed_slots == [GIT_SLOT]
 
 
+def test_a_lookup_that_cannot_start_does_not_take_the_daemon_down(git_rig):
+    instance, device, _asked, opened = git_rig
+
+    def no_threads_left(work):
+        raise RuntimeError("can't start new thread")
+
+    instance._spawn = no_threads_left
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+
+    assert instance._git_lookup is None, "not left looking"
+    assert device.flashed_slots == [GIT_SLOT] and opened == []
+
+    instance._spawn = lambda work: work()
+    instance.handle_press(GIT_SLOT)
+    assert opened == ["https://github.com/johnendean/herdrkeys"], "and the next press still works"
+
+
 def test_git_is_never_run_while_rendering(git_rig):
     # The key is steady rather than lit-when-available precisely so that no
     # frame costs a subprocess. A regression here would put git between every
