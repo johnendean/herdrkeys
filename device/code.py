@@ -46,7 +46,7 @@ except Exception:
     RETURN_KEY = None
 
 PROTOCOL = 1
-FIRMWARE = "herdrkeys-device/0.7.0"
+FIRMWARE = "herdrkeys-device/0.8.0"
 
 # --- palette ---------------------------------------------------------------
 # Focus is shown by brightness, never by hue.
@@ -117,7 +117,7 @@ RETURN_CODE = "e"
 RETURN_IDLE = (0, 12, 12)
 RETURN_HELD = (0, 80, 100)
 
-# The git key, in its two states. Violet is unused by every agent state
+# The git key, in its two resting states. Violet is unused by every agent state
 # and by the microphone. Both states are lit: dark would be indistinguishable
 # from a board with no daemon behind it.
 #
@@ -129,6 +129,11 @@ GIT_CODE = "r"          # the focused agent's directory has a page
 GIT_NONE_CODE = "n"     # ...and this one does not
 GIT_IDLE = (45, 0, 70)
 GIT_NONE = (7, 0, 11)
+# ...and while a press is finding out where to go, which can take a second
+# because it asks GitHub. Brighter, and still steady: it is acknowledging you,
+# not asking for you.
+GIT_LOOKING_CODE = "g"
+GIT_LOOKING = (110, 0, 170)
 
 # A press shorter than this latches the microphone open instead of closing it
 # with your finger; anything longer is an ordinary hold. Long enough not to fire
@@ -349,6 +354,8 @@ def colour_for(code, now, slot):
         if now < flash_until and flash_slot in (None, slot):
             return FN_FLASH
         return FN_IDLE
+    if code == GIT_LOOKING_CODE:
+        return GIT_LOOKING
     if code == GIT_CODE or code == GIT_NONE_CODE:
         if now < flash_until and flash_slot == slot:
             return FN_FLASH

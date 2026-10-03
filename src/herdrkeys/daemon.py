@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import logging
 import selectors
+import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 
 from . import activate as activate_app
@@ -37,6 +39,15 @@ IDLE_TIMEOUT = 1.0
 # current frame periodically to prove otherwise. Must be comfortably shorter
 # than HOST_TIMEOUT in device/code.py.
 HEARTBEAT_SECONDS = 2.0
+
+# How often the loop looks in on a git key lookup while one is running, so the
+# key stops showing it -- or flashes -- promptly rather than a whole idle pass
+# later.
+LOOKUP_POLL_SECONDS = 0.05
+
+
+def _in_background(work) -> None:
+    threading.Thread(target=work, name="git-key", daemon=True).start()
 
 # Herdr replays a backlog on subscribe, and a replayed event can carry the same
 # per-pane revision as the snapshot taken alongside it -- Herdr does not bump
@@ -96,6 +107,18 @@ class Backoff:
         return max(0.0, self._next_attempt - now)
 
 
+def _go_to_git(cwd: str) -> bool:
+    """The git key's whole journey, run off the loop. False if there was nowhere."""
+    page = remote_module.page_for(cwd)
+    if page is None:
+        return False
+    pulls = remote_module.open_pull_requests(page)
+    url = remote_module.destination(page, remote_module.current_branch(cwd), pulls)
+    log.info("opening %s", url)
+    remote_module.open_url(url)
+    return True
+
+
 class Daemon:
     def __init__(self, config: Config, *, clock=time.monotonic, device_factory=None) -> None:
         self.config = config
@@ -121,6 +144,12 @@ class Daemon:
         self._provision_backoff = Backoff(5.0, 60.0)
         self._refused: str | None = None
         self._host_app: str | None = config.terminal_app
+        # The git key's lookup, while one is running. Its result is whether
+        # anything was found: False is answered with a flash, which writes to
+        # the keypad, so it is collected here on the loop's own thread rather
+        # than done from the worker.
+        self._git_lookup: Future | None = None
+        self._spawn = _in_background
 
     # -- connections -----------------------------------------------------
 
@@ -302,27 +331,56 @@ class Daemon:
         )
 
     def _open_git(self) -> None:
-        """Open the focused agent's repository in a browser.
+        """Open the most specific place the focused agent's repository has.
 
-        Git is asked here and nowhere else. Resolving it on the render path
-        would put a subprocess between every status poll and the LEDs, to
-        answer a question nothing is asking until a finger lands on the key.
+        Git and GitHub are asked here and nowhere else. Resolving either on the
+        render path would put a subprocess -- and for GitHub a network round
+        trip -- between every status poll and the LEDs, to answer a question
+        nothing is asking until a finger lands on the key.
+
+        Even here they are asked off the loop's thread. Half a second is what
+        GitHub takes on a good day, and the loop is what animates every other
+        key; a press must not freeze the board while it waits (ADR 0013). A
+        second press while one is still looking is ignored rather than queued.
 
         A flash covers every way this can come to nothing -- no focused agent,
         no directory, not a repository, no `origin`, a remote that names no web
         host -- because the key does the same thing in all of them, and none of
         them is an error worth a log line every time you lean on the board.
         """
-        focused = self._focused_pane()
-        url = remote_module.page_for(focused.cwd if focused else None)
-        if url is None:
-            if self.device is not None:
-                # This key, not the function key: flashing that would say
-                # "nothing wants your attention", a different statement.
-                self.device.flash(GIT_SLOT)
+        if self._git_lookup is not None:
             return
-        log.info("opening %s", url)
-        remote_module.open_url(url)
+        focused = self._focused_pane()
+        cwd = focused.cwd if focused else None
+        if cwd is None:
+            self._flash_git()
+            return
+        lookup: Future = Future()
+        self._git_lookup = lookup
+
+        def work() -> None:
+            try:
+                lookup.set_result(_go_to_git(cwd))
+            except Exception as exc:  # a thread that dies silently leaves the key stuck looking
+                log.warning("git key lookup failed: %s", exc)
+                lookup.set_result(False)
+
+        self._spawn(work)
+        self._collect_git_lookup()
+
+    def _collect_git_lookup(self) -> None:
+        lookup = self._git_lookup
+        if lookup is None or not lookup.done():
+            return
+        self._git_lookup = None
+        if not lookup.result():
+            self._flash_git()
+
+    def _flash_git(self) -> None:
+        if self.device is not None:
+            # This key, not the function key: flashing that would say
+            # "nothing wants your attention", a different statement.
+            self.device.flash(GIT_SLOT)
 
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
@@ -382,6 +440,7 @@ class Daemon:
             self.settler,
             connected=self.stream is not None,
             git_page=git_page,
+            git_looking=self._git_lookup is not None,
         )
 
     def _push(self, frame: Frame, now: float) -> None:
@@ -417,6 +476,8 @@ class Daemon:
                 candidates.append(max(0.0, self._backlog_deadline - now))
         if self.device is None:
             candidates.append(self._device_backoff.wait_for(now))
+        if self._git_lookup is not None:
+            candidates.append(LOOKUP_POLL_SECONDS)
         return max(0.01, min(candidates))
 
     def run_forever(self) -> None:
@@ -436,6 +497,8 @@ class Daemon:
                     self._reconcile(now)
                 except (OSError, herdr.HerdrError) as exc:
                     self._drop_herdr(now, str(exc))
+
+            self._collect_git_lookup()
 
             # Render before sleeping, never after: rendering is what starts a
             # state settling, so doing it on the far side of the select would

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import MIC, MIC_SLOT, GIT_NO_PAGE, GIT_PAGE, GIT_SLOT, RETURN, RETURN_SLOT
+from herdrkeys.model import GIT_LOOKING, GIT_NO_PAGE, GIT_PAGE, GIT_SLOT, MIC, MIC_SLOT, RETURN, RETURN_SLOT
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 
@@ -464,3 +464,20 @@ def test_a_frame_without_colours_clears_the_last_ones(firmware):
 def test_a_malformed_colour_list_is_ignored_whole(firmware):
     firmware["handle"]({"t": "frame", "k": "i" * 16, "c": ["#a6e3a1"]})
     assert firmware["frame_colours"] is None, "sixteen or nothing, like the frame itself"
+
+
+# -- the git key, looking ---------------------------------------------------
+
+
+def test_the_firmware_answers_to_the_looking_character_the_host_sends(firmware):
+    assert firmware["GIT_LOOKING_CODE"] == GIT_LOOKING
+
+
+def test_looking_is_a_brighter_steady_violet(firmware):
+    now = time.monotonic()
+    looking = firmware["colour_for"](GIT_LOOKING, now, GIT_SLOT)
+    assert looking == firmware["GIT_LOOKING"]
+    assert sum(looking) > sum(firmware["GIT_IDLE"]), "brighter than a key at rest"
+    assert looking[1] == 0 and looking[2] > looking[0], "still the git key's violet"
+    over_a_cycle = {firmware["colour_for"](GIT_LOOKING, now + t, GIT_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
+    assert over_a_cycle == {looking}, "acknowledging you is not asking for you: no motion"

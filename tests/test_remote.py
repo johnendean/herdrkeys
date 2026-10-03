@@ -6,7 +6,17 @@ string work, so it is tested exhaustively here rather than through a daemon.
 
 import pytest
 
-from herdrkeys.remote import has_page, page_for, remote_from_config, web_url
+from herdrkeys import remote
+from herdrkeys.remote import (
+    PullRequest,
+    current_branch,
+    destination,
+    has_page,
+    open_pull_requests,
+    page_for,
+    remote_from_config,
+    web_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -235,3 +245,118 @@ def test_git_is_asked_only_when_the_config_says_nothing(tmp_path, monkeypatch):
     bare.mkdir()
     assert page_for(str(bare)) == "https://github.com/fallback/found"
     assert asked == [str(bare)], "the config said nothing, so git was asked"
+
+
+# -- where a press goes ----------------------------------------------------
+
+PAGE = "https://github.com/johnendean/herdrkeys"
+
+
+def pull(number, head):
+    return PullRequest(f"{PAGE}/pull/{number}", head)
+
+
+def test_the_branchs_own_pull_request_wins():
+    assert destination(PAGE, "feature", [pull(7, "other"), pull(9, "feature")]) == f"{PAGE}/pull/9"
+
+
+def test_only_other_branches_pull_requests_means_the_list():
+    # Even one. A pull request for another branch is not this agent's work, so
+    # it is never opened on its own.
+    assert destination(PAGE, "feature", [pull(7, "other")]) == f"{PAGE}/pulls"
+
+
+def test_no_open_pull_requests_means_the_page():
+    assert destination(PAGE, "feature", []) == PAGE
+
+
+def test_not_knowing_means_the_page():
+    assert destination(PAGE, "feature", None) == PAGE
+
+
+def test_a_detached_head_has_no_pull_request_of_its_own():
+    assert destination(PAGE, None, [pull(7, "other")]) == f"{PAGE}/pulls"
+
+
+def test_the_branch_is_read_from_head(tmp_path):
+    make_repo(tmp_path, PLAIN)
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/feature/thing\n")
+    (tmp_path / "sub").mkdir()
+    assert current_branch(str(tmp_path)) == "feature/thing"
+    assert current_branch(str(tmp_path / "sub")) == "feature/thing", "from anywhere inside"
+
+
+def test_a_detached_head_is_no_branch(tmp_path):
+    make_repo(tmp_path, PLAIN)
+    (tmp_path / ".git" / "HEAD").write_text("1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c\n")
+    assert current_branch(str(tmp_path)) is None
+
+
+def test_a_worktree_reads_its_own_head(tmp_path):
+    # Herdr's worktrees are the usual case: each has its own HEAD, in its own
+    # git dir, and that is the branch whose pull request matters.
+    main = make_repo(tmp_path / "main", PLAIN)
+    (main / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    worktree_git = main / ".git" / "worktrees" / "feature"
+    worktree_git.mkdir(parents=True)
+    (worktree_git / "HEAD").write_text("ref: refs/heads/feature\n")
+    (worktree_git / "commondir").write_text("../..\n")
+    checkout = tmp_path / "feature"
+    checkout.mkdir()
+    (checkout / ".git").write_text(f"gitdir: {worktree_git}\n")
+
+    assert current_branch(str(checkout)) == "feature"
+    assert current_branch(str(main)) == "main"
+
+
+def test_outside_a_repository_there_is_no_branch(tmp_path):
+    assert current_branch(str(tmp_path)) is None
+    assert current_branch(None) is None
+
+
+# -- asking gh -------------------------------------------------------------
+
+
+class Ran:
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode, self.stdout = returncode, stdout
+
+
+def test_gh_is_asked_about_the_pages_repository_without_prompting(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append((argv, kw))
+        return Ran(stdout='[{"url": "%s/pull/9", "headRefName": "feature"}]' % PAGE)
+
+    monkeypatch.setattr(remote.subprocess, "run", fake_run)
+
+    assert open_pull_requests(PAGE) == [pull(9, "feature")]
+    argv, kw = calls[0]
+    assert argv[:3] == ["gh", "pr", "list"]
+    assert argv[argv.index("--repo") + 1] == "github.com/johnendean/herdrkeys"
+    assert argv[argv.index("--state") + 1] == "open", "drafts are open, so they count"
+    assert kw["env"]["GH_PROMPT_DISABLED"] == "1"
+    assert kw["timeout"] <= 3.0
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        Ran(returncode=1),                     # not logged in, not GitHub, no such repo
+        Ran(stdout="not json"),
+        Ran(stdout='[{"url": "x"}]'),          # a shape we did not ask for
+    ],
+)
+def test_every_way_gh_can_fail_is_not_knowing(monkeypatch, outcome):
+    monkeypatch.setattr(remote.subprocess, "run", lambda argv, **kw: outcome)
+    assert open_pull_requests(PAGE) is None
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("gh"), remote.subprocess.TimeoutExpired("gh", 3.0)])
+def test_no_gh_or_a_slow_one_is_not_knowing(monkeypatch, error):
+    def fake_run(argv, **kw):
+        raise error
+
+    monkeypatch.setattr(remote.subprocess, "run", fake_run)
+    assert open_pull_requests(PAGE) is None

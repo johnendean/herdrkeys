@@ -45,6 +45,10 @@ RETURN = "e"  # ...and the same for the return key
 # it -- and the device decides how far apart they look.
 GIT_PAGE = "r"
 GIT_NO_PAGE = "n"
+# ...and a third, while a press is finding out where to go. The lookup asks
+# GitHub, so it can take a second, and a key that does nothing for a second
+# reads as a key that did not hear you.
+GIT_LOOKING = "g"
 
 _STATE_CODE = {
     AgentState.IDLE: "i",
@@ -60,7 +64,9 @@ def state_code(state: AgentState, *, focused: bool) -> str:
     return code.upper() if focused else code
 
 
-def feature_keys(*, connected: bool, git_page: bool = False) -> list[str]:
+def feature_keys(
+    *, connected: bool, git_page: bool = False, git_looking: bool = False
+) -> list[str]:
     """An empty frame with the feature row already filled in.
 
     One place decides what the non-agent keys show, so a frame and a blank frame
@@ -69,7 +75,10 @@ def feature_keys(*, connected: bool, git_page: bool = False) -> list[str]:
     keys = [EMPTY] * SLOT_COUNT
     keys[MIC_SLOT] = MIC
     keys[RETURN_SLOT] = RETURN
-    keys[GIT_SLOT] = GIT_PAGE if git_page else GIT_NO_PAGE
+    if git_looking:
+        keys[GIT_SLOT] = GIT_LOOKING
+    else:
+        keys[GIT_SLOT] = GIT_PAGE if git_page else GIT_NO_PAGE
     keys[FN_SLOT] = FN_CONNECTED if connected else FN_DISCONNECTED
     return keys
 

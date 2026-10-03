@@ -6,10 +6,10 @@ from herdrkeys.model import (
     FEATURE_SLOTS,
     FN_CONNECTED,
     FN_DISCONNECTED,
-    MIC,
-    RETURN,
     GIT_NO_PAGE,
     GIT_SLOT,
+    MIC,
+    RETURN,
     AgentPane,
     AgentState,
 )

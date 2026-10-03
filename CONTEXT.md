@@ -47,7 +47,7 @@ as fit; an agent past the twelfth in the agent list is not on the board and the
 function key cannot reach it.
 
 **Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
-key**, 13 the **return key**, 14 the **repo key** and 15 the **function key**.
+key**, 13 the **return key**, 14 the **git key** and 15 the **function key**.
 None is spare. Which row
 this is physically depends on how the board is turned, which only the device
 knows. There is no "function row": the row is the feature row, and the function
@@ -89,16 +89,24 @@ never settled.
 **Function key** — Slot 15. Focuses the next agent needing attention, and is the
 only key that shows whether the daemon can see Herdr at all.
 
-**Repo key** — Slot 14. Opens the repository of whichever agent is focused,
-in a browser. It follows focus rather than holding a repository of its own, so
-what it opens changes as you move around, and it shows whether the agent it is
-following has a **page** before you press it. Never dark: "no page here" is a
-state it reports, not an absence.
+**Git key** — Slot 14. Opens, in a browser, the most specific place the focused
+agent's repository has to offer: its **pull request** if it has one; otherwise
+the repository's open pull requests, if there are any; otherwise its **page**.
+It follows focus rather than holding a repository of its own, so what it opens
+changes as you move around. Its colour says only whether there is a page --
+which of the three a press will reach is found out by pressing. Never dark: "no
+page here" is a state it reports, not an absence. Formerly the repo key.
 
 **Page** — The web address a repository's remote names. A remote that names no
 host — a local clone, a path — has no page, and neither does a directory
 outside a repository. A press that finds none is answered with a flash rather
 than treated as a failure.
+
+**Pull request** — An open pull request whose head is the branch the agent's
+directory has checked out. An agent has at most one that matters; a pull request
+for some other branch is never *its* pull request, however few others there are.
+A draft counts. Only GitHub's are known about; elsewhere, and whenever finding
+out fails or is slow, the git key behaves as if there were none.
 
 **Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
 Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next

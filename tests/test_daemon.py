@@ -6,15 +6,17 @@ import pytest
 from herdrkeys import daemon as daemon_module
 from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
+from herdrkeys import remote as remote_module
 from herdrkeys.device import FakeDevice
 from herdrkeys.model import (
     FEATURE_SLOTS,
     FN_SLOT,
-    MIC_SLOT,
-    RETURN_SLOT,
+    GIT_LOOKING,
     GIT_NO_PAGE,
     GIT_PAGE,
     GIT_SLOT,
+    MIC_SLOT,
+    RETURN_SLOT,
     AgentState,
 )
 
@@ -675,9 +677,15 @@ def test_no_keybow_attached_does_nothing_at_all(rig, monkeypatch):
 
 @pytest.fixture
 def git_rig(rig, monkeypatch):
-    """The daemon rig, with git and the browser replaced by recordings."""
+    """The daemon rig, with git, GitHub and the browser replaced by recordings.
+
+    The lookup runs inline rather than on a thread, so a press has finished by
+    the time `handle_press` returns. GitHub has no open pull requests unless a
+    test says otherwise, through `pulls`.
+    """
     instance, device, _focused, _activated = rig
     asked, opened = [], []
+    pulls = {"answer": []}
 
     def fake_remote(cwd, *, remote="origin", timeout=5.0):
         asked.append(cwd)
@@ -685,6 +693,10 @@ def git_rig(rig, monkeypatch):
 
     monkeypatch.setattr(daemon_module.remote_module, "remote_url", fake_remote)
     monkeypatch.setattr(daemon_module.remote_module, "open_url", lambda url, **kw: opened.append(url))
+    monkeypatch.setattr(daemon_module.remote_module, "open_pull_requests", lambda page, **kw: pulls["answer"])
+    monkeypatch.setattr(daemon_module.remote_module, "current_branch", lambda cwd: "feature")
+    instance._spawn = lambda work: work()
+    instance.pulls = pulls
     return instance, device, asked, opened
 
 
@@ -751,6 +763,93 @@ def test_a_focused_pane_with_no_directory_flashes(git_rig):
     instance.handle_press(GIT_SLOT)
 
     assert opened == [] and asked == []
+    assert device.flashed_slots == [GIT_SLOT]
+
+
+def test_the_git_key_opens_the_agents_own_pull_request(git_rig):
+    instance, _device, _asked, opened = git_rig
+    instance.pulls["answer"] = [
+        remote_module.PullRequest("https://github.com/johnendean/herdrkeys/pull/7", "other"),
+        remote_module.PullRequest("https://github.com/johnendean/herdrkeys/pull/9", "feature"),
+    ]
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+
+    assert opened == ["https://github.com/johnendean/herdrkeys/pull/9"]
+
+
+def test_other_branches_pull_requests_open_the_list_not_one_of_them(git_rig):
+    instance, _device, _asked, opened = git_rig
+    instance.pulls["answer"] = [
+        remote_module.PullRequest("https://github.com/johnendean/herdrkeys/pull/7", "other"),
+    ]
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+
+    assert opened == ["https://github.com/johnendean/herdrkeys/pulls"]
+
+
+def test_not_finding_out_about_pull_requests_still_opens_the_page(git_rig):
+    # No gh, not logged in, offline: all None, and all the page. The key is
+    # never worse than it was before it knew about pull requests.
+    instance, device, _asked, opened = git_rig
+    instance.pulls["answer"] = None
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+
+    assert opened == ["https://github.com/johnendean/herdrkeys"]
+    assert device.flashed_slots == []
+
+
+def test_the_key_shows_it_is_looking_until_the_lookup_lands(git_rig):
+    instance, device, _asked, opened = git_rig
+    parked = []
+    instance._spawn = parked.append  # a lookup that has not finished yet
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+    assert instance.render(2.0).keys[GIT_SLOT] == GIT_LOOKING
+
+    instance.handle_press(GIT_SLOT)
+    assert len(parked) == 1, "a second press while looking is ignored, not queued"
+
+    parked[0]()
+    instance._collect_git_lookup()
+    assert instance.render(3.0).keys[GIT_SLOT] != GIT_LOOKING
+    assert opened == ["https://github.com/johnendean/herdrkeys"]
+
+
+def test_a_lookup_that_finds_nowhere_flashes_once_it_lands(git_rig):
+    # The flash writes to the keypad, so it comes from the loop's thread when
+    # the result is collected, never from the worker.
+    instance, device, _asked, _opened = git_rig
+    parked = []
+    instance._spawn = parked.append
+    load(instance, [git_pane("w1:p1", "/elsewhere", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+    parked[0]()
+    assert device.flashed_slots == [], "not from the worker"
+
+    instance._collect_git_lookup()
+    assert device.flashed_slots == [GIT_SLOT]
+
+
+def test_a_lookup_that_crashes_does_not_leave_the_key_looking(git_rig, monkeypatch):
+    instance, device, _asked, _opened = git_rig
+
+    def boom(page, **kw):
+        raise RuntimeError("gh exploded")
+
+    monkeypatch.setattr(daemon_module.remote_module, "open_pull_requests", boom)
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+
+    instance.handle_press(GIT_SLOT)
+
+    assert instance._git_lookup is None
     assert device.flashed_slots == [GIT_SLOT]
 
 

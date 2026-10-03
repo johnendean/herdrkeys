@@ -7,7 +7,7 @@ a running [Herdr](https://herdr.dev) session. The LEDs show what every agent is
 doing; the keys jump to them.
 
 ```
-[12 m mic    ] [13 e return ] [14 r repo   ] [15 f fn      ]   <- the feature row
+[12 m mic    ] [13 e return ] [14 r git    ] [15 f fn      ]   <- the feature row
 [ 8 -        ] [ 9 -        ] [10 -        ] [11 -         ]
 [ 4 -        ] [ 5 -        ] [ 6 -        ] [ 7 -         ]
 [ 0 w working] [ 1 B blocked] [ 2 i idle   ] [ 3 -         ]
@@ -94,16 +94,33 @@ cyan than the microphone -- the two are one tool -- and brightens while pressed.
 nothing**: Flow has not inserted the text yet, and a Return then would send the
 prompt without it. Press again once the text is there.
 
-The **git key** (slot 14) opens the focused agent's repository in a browser. It
-follows focus rather than remembering a repository of its own, so what it opens
-is whatever you are looking at. Any remote that names a host works -- GitHub,
-GitLab, Bitbucket, a forge of your own -- because the rewrite from `git@host:o/r`
-to `https://host/o/r` is the same everywhere; there is no list of supported
-hosts to be missing from.
+The **git key** (slot 14) opens the most specific place the focused agent's
+repository has, in a browser:
+
+1. **the agent's pull request** -- an open one, draft or not, from the branch its
+   directory has checked out;
+2. otherwise **the repository's open pull requests**, if there are any -- never
+   one of them on its own, because a pull request for another branch is not
+   this agent's work;
+3. otherwise **the repository's page**, as before.
+
+It follows focus rather than remembering a repository of its own, so what it
+opens is whatever you are looking at. Any remote that names a host has a page --
+GitHub, GitLab, Bitbucket, a forge of your own -- because the rewrite from
+`git@host:o/r` to `https://host/o/r` is the same everywhere; there is no list of
+supported hosts to be missing from.
+
+Pull requests are GitHub's, found by asking [`gh`](https://cli.github.com/) when
+you press, which takes about half a second. The key goes brighter while it asks,
+and the rest of the board carries on. Without `gh`, logged out, offline, on
+another host, or after three seconds of waiting, the key opens the page exactly
+as it always did -- `gh` is optional, never a dependency. See ADR 0013.
 
 **Bright violet means there is a page; dim violet means there is not** -- so you
-know before you press, and the key is never dark, which would read as no daemon
-at all. It changes as you move between agents.
+know before you press -- though not whether there is a pull request, because
+finding that out means asking GitHub, which is done on a press and never in the
+background. The key is never dark, which would read as no daemon at all. It
+changes as you move between agents.
 
 That colour is read straight out of `.git/config` rather than by running git:
 the frame is rebuilt on every pass of the loop, at least twice a second, and
