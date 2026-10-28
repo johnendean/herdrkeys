@@ -1,7 +1,7 @@
 [project]
 name = "herdrkeys"
 version = "0.1.0"
-description = "Bind a Pimoroni Keybow 2040 to a running Herdr session"
+description = "Bind a Pimoroni Keybow 2040 or a Soomfon CN001 to a running Herdr session"
 requires-python = ">=3.11"
 dependencies = []  # deliberately none: see ADR 0003
 

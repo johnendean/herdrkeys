@@ -103,8 +103,8 @@ class TuiDevice:
         self._out.write(f"frame: {frame.keys}\n")
         self._out.flush()
 
-    def flash(self) -> None:
-        self._out.write("\a[flash] nothing wants your attention\n")
+    def flash(self, slot: int | None = None) -> None:
+        self._out.write("\a[flash] nothing wants your attention\n" if slot is None else f"\a[flash] key {slot}\n")
         self._out.flush()
 
     def read_presses(self) -> list[int]:
@@ -121,3 +121,9 @@ class TuiDevice:
         if self._saved is not None:
             termios.tcsetattr(self._in, termios.TCSADRAIN, self._saved)
             self._saved = None
+
+    def animate(self, now: float) -> None:
+        pass  # redrawn per frame; see ADR 0011 on what the preview cannot show
+
+    def next_change(self, now: float) -> float | None:
+        return None

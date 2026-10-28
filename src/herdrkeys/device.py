@@ -37,6 +37,11 @@ class Device(Protocol):
     def flash(self, slot: int | None = None) -> None: ...
     def read_presses(self) -> list[int]: ...
     def close(self) -> None: ...
+    # A board that animates itself does nothing here and never needs a pass;
+    # one that the host draws (ADR 0014) is redrawn by `animate`, and says by
+    # `next_change` how soon it next has to be.
+    def animate(self, now: float) -> None: ...
+    def next_change(self, now: float) -> float | None: ...
 
 
 def encode_frame(frame: Frame) -> bytes:
@@ -144,6 +149,12 @@ class SerialDevice:
     def close(self) -> None:
         self._serial.close()
 
+    def animate(self, now: float) -> None:
+        pass  # the Keybow animates itself
+
+    def next_change(self, now: float) -> float | None:
+        return None
+
 
 class FakeDevice:
     """Records frames instead of lighting LEDs. Lets tests run with no hardware."""
@@ -176,3 +187,9 @@ class FakeDevice:
 
     def close(self) -> None:
         self.closed = True
+
+    def animate(self, now: float) -> None:
+        pass
+
+    def next_change(self, now: float) -> float | None:
+        return None

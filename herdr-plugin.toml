@@ -2,7 +2,7 @@ id = "herdrkeys"
 name = "herdrkeys"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
-description = "Show Herdr agent state on a Pimoroni Keybow 2040, and focus agents from its keys"
+description = "Show Herdr agent state on a Pimoroni Keybow 2040 or a Soomfon CN001, and focus agents from their keys"
 platforms = ["macos"]
 
 # No build step in the usual sense: the daemon has no third-party dependencies,
