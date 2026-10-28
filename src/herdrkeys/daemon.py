@@ -466,6 +466,10 @@ class Daemon:
 
     def _pump_boards(self, now: float) -> None:
         for board in self._connected():
+            # A press on an earlier board can drop this one -- a flash that
+            # finds it unplugged -- so check again rather than trust the list.
+            if board.device is None:
+                continue
             try:
                 presses = board.device.read_presses()
             except DeviceError as exc:

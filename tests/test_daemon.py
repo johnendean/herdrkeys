@@ -1001,3 +1001,20 @@ def test_closing_the_daemon_lets_every_board_go(two_boards):
     instance.close()
     assert first.closed and second.closed
     assert all(board.device is None for board in instance.boards)
+
+
+def test_a_board_dropped_by_an_earlier_press_is_not_read(two_boards):
+    # A function-key press on the first board with nothing wanting you
+    # flashes every board; the second is unplugged, so the flash drops it
+    # partway through reading presses.
+    instance, first, second, _ = two_boards
+    load(instance, [agent_pane("w1:p1", "idle")], None)
+
+    def unplugged(slot=None):
+        raise daemon_module.DeviceError("gone")
+
+    second.flash = unplugged
+    first.queued_presses = [FN_SLOT]
+    instance._pump_boards(2.0)
+    assert instance.boards[1].device is None
+    assert instance.boards[0].device is first, "the daemon and the first board carry on"

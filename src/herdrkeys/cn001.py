@@ -257,7 +257,12 @@ class CN001Device:
     def _jpeg(self, rgb: RGB) -> bytes:
         jpeg = self._jpegs.get(rgb)
         if jpeg is None:
-            jpeg = encode_jpeg(KEY_PIXELS, KEY_PIXELS, solid(rgb))
+            try:
+                jpeg = encode_jpeg(KEY_PIXELS, KEY_PIXELS, solid(rgb))
+            except OSError as exc:
+                # This board's failure, not the daemon's: as a DeviceError it
+                # drops the CN001 and leaves the Keybow running.
+                raise DeviceError(f"cn001: {exc}") from exc
             self._jpegs[rgb] = jpeg
         return jpeg
 

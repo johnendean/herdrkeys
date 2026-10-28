@@ -84,15 +84,16 @@ def _cn001_report(daemon_pid: int | None) -> tuple[bool, bool, str]:
     for _other, extra in others:
         macos.release(extra)
     where = f"serial {info.serial}" if info.serial else "attached"
-    if daemon_pid is not None:
-        # The daemon has it open, so opening it here would prove nothing.
-        macos.release(ref)
-        return True, True, f"{where}  in use by the running daemon (pid {daemon_pid})"
+    # Probed even while the daemon runs: a running daemon does not mean it got
+    # the board -- another app may hold it, and the daemon only retries. Our
+    # open never seizes the device, so it succeeds alongside the daemon's.
     try:
         macos.HidDevice(ref, input_size=cn001.INPUT_SIZE).close()
     except OSError as exc:
         hint = "  -- quit the Soomfon Stream Controller app" if "Exclusive" in str(exc) else ""
         return True, False, f"{where}  WILL NOT OPEN  ({exc}){hint}"
+    if daemon_pid is not None:
+        return True, True, f"{where}  ok, opens alongside the running daemon (pid {daemon_pid})"
     return True, True, f"{where}  ok"
 
 

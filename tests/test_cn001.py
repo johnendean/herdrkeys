@@ -288,3 +288,13 @@ def test_closing_a_board_already_gone_still_lets_it_go():
     hid.unplugged = True
     board.close()
     assert hid.closed
+
+
+def test_an_encoder_failure_is_the_boards_failure_not_the_daemons(monkeypatch):
+    def broken(w, h, px):
+        raise OSError("JPEG encoding failed")
+
+    monkeypatch.setattr(cn001, "encode_jpeg", broken)
+    board = cn001.CN001Device(FakeHid(), clock=Clock(0.5))
+    with pytest.raises(DeviceError):
+        board.send_frame(frame({0: "i"}))
