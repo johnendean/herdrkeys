@@ -33,7 +33,7 @@ def rig(tmp_path, monkeypatch):
     config = Config(settle_seconds=0.0, activate_terminal=True)
     device = FakeDevice()
     instance = Daemon(config, device_factory=lambda: device)
-    instance.device = device
+    instance.boards[0].device = device
     return instance, device, focused, activated
 
 
@@ -275,7 +275,7 @@ def test_an_unchanged_frame_is_resent_as_a_heartbeat(rig):
 
 def test_the_heartbeat_keeps_the_loop_awake(rig):
     instance, _device, _focused, _ = rig
-    instance._last_push_at = 100.0
+    instance.boards[0].last_push_at = 100.0
     assert instance._timeout(100.0) <= daemon_module.HEARTBEAT_SECONDS
 
 
@@ -359,7 +359,7 @@ def test_a_stale_descriptor_drops_the_keypad_rather_than_the_daemon(rig, monkeyp
 
     device.fileno = stale_fileno
     instance._herdr_backoff = Backoff(0.0, 0.0)
-    instance._device_backoff = Backoff(0.0, 0.0)
+    instance.boards[0].backoff = Backoff(0.0, 0.0)
     monkeypatch.setattr(daemon_module.herdr, "EventStream", lambda path, **kw: (_ for _ in ()).throw(OSError("no herdr")))
 
     ticks = iter([0.0, 0.01, 0.02, 0.03])
@@ -374,7 +374,7 @@ def test_a_stale_descriptor_drops_the_keypad_rather_than_the_daemon(rig, monkeyp
     with pytest.raises(Stop):
         instance.run_forever()
 
-    assert instance.device is None, "the keypad was dropped; the daemon kept running"
+    assert instance.boards[0].device is None, "the keypad was dropped; the daemon kept running"
     assert device.closed
 
 
@@ -450,7 +450,7 @@ def test_the_poll_paces_itself_and_keeps_the_loop_awake(rig, monkeypatch):
     monkeypatch.setattr(daemon_module.herdr, "agents", lambda path: [])
     instance.stream = object()
     instance.config.status_poll_seconds = 0.5
-    instance._last_push_at = 100.0
+    instance.boards[0].last_push_at = 100.0
     instance._next_reconcile = 130.0
 
     instance._poll_status(100.0)
@@ -926,3 +926,95 @@ def test_rendering_spawns_no_process(rig, monkeypatch):
 
     for tick in range(10):
         instance.render(float(tick))
+
+
+# -- more than one board ----------------------------------------------------
+
+
+@pytest.fixture
+def two_boards(rig):
+    """The rig's daemon with a second fake board beside the first."""
+    instance, first, focused, activated = rig
+    second = FakeDevice()
+    extra = daemon_module.Board("second", lambda now: second, Backoff(0.0, 0.0))
+    extra.device = second
+    instance.boards.append(extra)
+    return instance, first, second, focused
+
+
+def test_every_board_is_shown_the_same_frame(two_boards):
+    instance, first, second, _ = two_boards
+    load(instance, [agent_pane("w1:p1", "blocked")], None)
+    instance._push(instance.render(2.0), 2.0)
+    assert first.last_frame is not None
+    assert first.last_frame == second.last_frame
+
+
+def test_a_press_on_either_board_means_the_same_thing(two_boards):
+    instance, _first, second, focused = two_boards
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "idle")], None)
+    second.queued_presses = [1]
+    instance._pump_boards(2.0)
+    assert focused == ["w2:p1"]
+
+
+def test_a_flash_shows_on_every_board(two_boards):
+    instance, first, second, _ = two_boards
+    load(instance, [agent_pane("w1:p1", "idle")], None)
+    instance.handle_press(FN_SLOT)  # nothing wants you
+    assert first.flashes == 1 and second.flashes == 1
+
+
+def test_losing_one_board_leaves_the_other_lit(two_boards):
+    instance, first, second, _ = two_boards
+    load(instance, [agent_pane("w1:p1", "idle")], None)
+
+    def unplugged(frame):
+        raise daemon_module.DeviceError("gone")
+
+    first.send_frame = unplugged
+    instance._push(instance.render(2.0), 2.0)
+    assert instance.boards[0].device is None
+    assert second.last_frame is not None, "the other board never noticed"
+
+
+def test_a_board_the_host_draws_keeps_the_loop_awake_while_it_moves(two_boards):
+    instance, _first, second, _ = two_boards
+    for board in instance.boards:
+        board.last_push_at = 100.0
+    second.next_change = lambda now: 0.2
+    instance._herdr_backoff = Backoff(60.0, 60.0)
+    instance._herdr_backoff.failed(100.0)  # nothing else due for a minute
+    assert instance._timeout(100.0) == pytest.approx(0.2)
+
+
+def test_an_absent_board_is_waited_for_not_an_error(rig):
+    instance, _device, _focused, _ = rig
+    board = daemon_module.Board("absent", lambda now: None, Backoff(1.0, 1.0))
+    instance._connect_board(board, 5.0)
+    assert board.device is None
+    assert not board.backoff.ready(5.5)
+
+
+def test_closing_the_daemon_lets_every_board_go(two_boards):
+    instance, first, second, _ = two_boards
+    instance.close()
+    assert first.closed and second.closed
+    assert all(board.device is None for board in instance.boards)
+
+
+def test_a_board_dropped_by_an_earlier_press_is_not_read(two_boards):
+    # A function-key press on the first board with nothing wanting you
+    # flashes every board; the second is unplugged, so the flash drops it
+    # partway through reading presses.
+    instance, first, second, _ = two_boards
+    load(instance, [agent_pane("w1:p1", "idle")], None)
+
+    def unplugged(slot=None):
+        raise daemon_module.DeviceError("gone")
+
+    second.flash = unplugged
+    first.queued_presses = [FN_SLOT]
+    instance._pump_boards(2.0)
+    assert instance.boards[1].device is None
+    assert instance.boards[0].device is first, "the daemon and the first board carry on"

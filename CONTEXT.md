@@ -1,7 +1,8 @@
 # Context
 
-herdrkeys binds a Pimoroni Keybow 2040 macro keypad to a running Herdr session:
-its LEDs show agent lifecycle state, and its keys focus agents.
+herdrkeys binds a Pimoroni Keybow 2040 macro keypad, a Soomfon CN001, or both,
+to a running Herdr session: their keys show agent lifecycle state, and pressing
+one focuses its agent.
 
 ## Glossary
 
@@ -38,13 +39,16 @@ but unclassifiable — it does not mean the agent finished.
 the agent list, so only they reach the keypad; plain shell panes do not. A pane
 survives its agent leaving; its key does not.
 
-**Slot** — One of the keypad's 16 physical keys, together with whatever it shows.
+**Slot** — One of the frame's 16 positions, together with whatever it shows.
 Slots 0–11 are the **grid** and hold agents; slots 12–15 are the **feature row**
-and never do.
+and never do. A slot is not a key: each **board** puts slots on its own keys, and
+a board with fewer keys shows fewer slots.
 
-**Grid** — Slots 0–11: the keys that hold agents. Holds twelve, which is as many
-as fit; an agent past the twelfth in the agent list is not on the board and the
-function key cannot reach it.
+**Grid** — Slots 0–11: the slots that hold agents. Holds twelve; an agent past
+the twelfth in the agent list is on no board and the function key cannot reach
+it. A board may show fewer: the CN001 shows the first ten, so the eleventh and
+twelfth agents are on the Keybow only — but still reachable by the function key
+pressed on either board, since both press into the same frame.
 
 **Feature row** — Slots 12–15, which carry no agents: 12 is the **microphone
 key**, 13 the **return key**, 14 the **git key** and 15 the **function key**.
@@ -123,6 +127,12 @@ has not landed yet, and Return then would send the prompt without it.
 **Latch** — The microphone held open with no finger on the key. It pulses while
 latched, and ends on a second tap, on a five-minute timeout, or on anything that
 would otherwise release the key.
+
+**Board** — One attached keypad: a Keybow 2040 or a Soomfon CN001. Every board
+shows the same frame and any board's press means the same thing, so two boards
+are two views of one agent list, not two lists. A board says what each meaning
+looks like on its own keys; whether that is decided on the board or on the host
+depends only on whether the board can run code of ours.
 
 **Daemon** — The host process. It is the only component that talks to Herdr, and
 the only component that decides anything; the keypad renders frames, reports key

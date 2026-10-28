@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 
 import os
 import subprocess
 
-from . import activate, discovery, herdr, herdr_state, provision
+from . import activate, cn001, discovery, herdr, herdr_state, macos, provision
 from .config import Config
 from .paths import resolve_config
 from .daemon import PROCESS_MARKER, Daemon
@@ -67,6 +68,35 @@ def _colour_report(agent_panes: list[dict]) -> str:
     )
 
 
+def _cn001_report(daemon_pid: int | None) -> tuple[bool, bool, str]:
+    """(attached, healthy, what to print) for the Soomfon CN001.
+
+    Absent is not a failure on its own; `doctor` decides that once it knows
+    whether there is a Keybow instead.
+    """
+    try:
+        found = macos.find_hid(cn001.VENDOR_ID, cn001.PRODUCT_ID, cn001.USAGE_PAGE)
+    except OSError as exc:
+        return False, False, f"UNAVAILABLE  ({exc})"
+    if not found:
+        return False, True, "not attached  (1500:3003)"
+    (info, ref), *others = found
+    for _other, extra in others:
+        macos.release(extra)
+    where = f"serial {info.serial}" if info.serial else "attached"
+    # Probed even while the daemon runs: a running daemon does not mean it got
+    # the board -- another app may hold it, and the daemon only retries. Our
+    # open never seizes the device, so it succeeds alongside the daemon's.
+    try:
+        macos.HidDevice(ref, input_size=cn001.INPUT_SIZE).close()
+    except OSError as exc:
+        hint = "  -- quit the Soomfon Stream Controller app" if "Exclusive" in str(exc) else ""
+        return True, False, f"{where}  WILL NOT OPEN  ({exc}){hint}"
+    if daemon_pid is not None:
+        return True, True, f"{where}  ok, opens alongside the running daemon (pid {daemon_pid})"
+    return True, True, f"{where}  ok"
+
+
 def doctor(config: Config) -> int:
     """Report on everything the daemon depends on, without changing anything."""
     ok = True
@@ -98,8 +128,11 @@ def doctor(config: Config) -> int:
         print(f"colours          {_colour_report(agents)}")
 
     ports = discovery.find_ports()
+    cn001_present, cn001_ok, cn001_line = _cn001_report(daemon_pid)
     if not ports:
-        ok = False
+        # One board is enough: a missing Keybow is a failure only when there
+        # is no other board for the daemon to show anything on -- decided
+        # below, once the CN001 has been reported.
         print("keybow           NOT FOUND  (no 16d0:08c6 serial ports; is it plugged in?)")
     elif len(ports) == 1:
         ok = False
@@ -126,6 +159,12 @@ def doctor(config: Config) -> int:
             except Exception as exc:
                 ok = False
                 print(f"NO HANDSHAKE  ({exc})")
+
+    print(f"cn001            {cn001_line}")
+    if cn001_present:
+        ok = ok and cn001_ok
+    elif not ports:
+        ok = False
 
     print(f"daemon           {'running, pid ' + str(daemon_pid) if daemon_pid else 'not running  (make install-agent, or make run)'}")
 
@@ -174,7 +213,7 @@ def adopt(config: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="herdrkeys", description="Bind a Keybow 2040 to Herdr.")
+    parser = argparse.ArgumentParser(prog="herdrkeys", description="Bind a Keybow 2040 or a Soomfon CN001 to Herdr.")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("run", help="run the daemon against the real keypad (default)")
@@ -205,10 +244,17 @@ def main(argv: list[str] | None = None) -> int:
             device.close()
         return 0
 
+    # launchd and `kill` stop the daemon with SIGTERM. Raised as an exception it
+    # unwinds through `close`, which is the only chance there is to blank the
+    # CN001: that panel keeps whatever it was last sent, indefinitely.
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(0))
+    daemon = Daemon(config)
     try:
-        Daemon(config).run_forever()
+        daemon.run_forever()
     except KeyboardInterrupt:
         return 0
+    finally:
+        daemon.close()
     return 0
 
 

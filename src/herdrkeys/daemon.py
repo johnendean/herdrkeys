@@ -1,9 +1,9 @@
-"""Wiring: Herdr on one side, the keypad on the other, the reducer in between.
+"""Wiring: Herdr on one side, the boards on the other, the reducer in between.
 
-The two sides fail independently and routinely -- you unplug the keypad, Herdr
-restarts on update -- so the daemon never exits voluntarily. Each side has its
-own reconnect loop with capped backoff, and launchd's KeepAlive is only a crash
-net. Cycling the process for a routine reconnect would drop the connection to
+Every side fails independently and routinely -- you unplug a keypad, Herdr
+restarts on update -- so the daemon never exits voluntarily. Herdr and each
+board have their own reconnect loop with capped backoff, and launchd's
+KeepAlive is only a crash net. Cycling the process for a routine reconnect would drop the connection to
 Herdr for no reason, and the keys go dark while it is gone.
 """
 
@@ -17,7 +17,7 @@ from concurrent.futures import Future
 from pathlib import Path
 
 from . import activate as activate_app
-from . import discovery, herdr, provision, reducer
+from . import cn001, discovery, herdr, provision, reducer
 from . import remote as remote_module
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
@@ -86,6 +86,26 @@ def remove_legacy_slot_map() -> None:
     log.info("removed the old slot map at %s; keys follow herdr's order now", path)
 
 
+class Board:
+    """One keypad: how to reach it, and what it was last shown.
+
+    Every board is shown the same frame and every board's press means the same
+    thing, so the daemon holds one of these per kind of keypad and treats them
+    alike (CONTEXT.md, "Board"). Absent is a normal state for any of them.
+    """
+
+    def __init__(self, name: str, connect, backoff: Backoff) -> None:
+        self.name = name
+        # (now) -> Device, or None when no such board is attached. Raises
+        # OSError or DeviceError when one is attached and will not talk.
+        self.connect = connect
+        self.backoff = backoff
+        self.device: Device | None = None
+        self.last_frame: Frame | None = None
+        self.last_push_at = 0.0
+        self.last_error: str | None = None
+
+
 class Backoff:
     def __init__(self, minimum: float, maximum: float) -> None:
         self.minimum, self.maximum = minimum, maximum
@@ -130,12 +150,19 @@ class Daemon:
         self.order = OrderSettler(config.settle_seconds)
 
         self.stream: herdr.EventStream | None = None
-        self.device: Device | None = None
-        self.last_frame: Frame | None = None
-        self._last_push_at = 0.0
 
         self._herdr_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
-        self._device_backoff = Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
+
+        def backoff() -> Backoff:
+            return Backoff(config.reconnect_min_seconds, config.reconnect_max_seconds)
+
+        if device_factory is not None:
+            self.boards = [Board("keypad", lambda now: device_factory(), backoff())]
+        else:
+            self.boards = [
+                Board("keybow", self._open_keybow, backoff()),
+                Board("cn001", self._open_cn001, backoff()),
+            ]
         self._next_reconcile = 0.0
         self._next_status_poll = 0.0
         self._backlog_settling = False
@@ -176,26 +203,37 @@ class Daemon:
         self._backlog_settling = False
         self._herdr_backoff.failed(now)
 
-    def _connect_device(self, now: float) -> None:
-        if self.device_factory is not None:
-            self.device = self.device_factory()
-            self._device_backoff.succeeded()
-            self.last_frame = None
+    def _connect_board(self, board: Board, now: float) -> None:
+        try:
+            device = board.connect(now)
+        except (OSError, DeviceError) as exc:
+            board.device = None
+            board.backoff.failed(now)
+            # Once per distinct reason: a board that will not talk usually
+            # keeps not talking for the same reason -- another app holding the
+            # CN001, say -- and a line every backoff says nothing new.
+            if str(exc) != board.last_error:
+                board.last_error = str(exc)
+                log.warning("%s connect failed: %s", board.name, exc)
             return
+        if device is None:
+            board.backoff.failed(now)
+            return
+        board.device = device
+        board.backoff.succeeded()
+        board.last_error = None
+        board.last_frame = None  # force a full frame onto a fresh board
+        log.info("connected to %s (%s)", board.name, device.firmware)
+
+    def _open_keybow(self, now: float) -> Device | None:
         port = self.config.serial_port or discovery.find_data_port()
         if port is None:
             self._maybe_provision(now)
-            self._device_backoff.failed(now)
-            return
-        try:
-            self.device = SerialDevice(port)
-            self._device_backoff.succeeded()
-            self.last_frame = None  # force a full frame onto fresh firmware
-            log.info("connected to keypad at %s (%s)", port, self.device.firmware)
-        except (OSError, DeviceError) as exc:
-            self.device = None
-            self._device_backoff.failed(now)
-            log.debug("keypad connect failed: %s", exc)
+            return None
+        return SerialDevice(port)
+
+    def _open_cn001(self, now: float) -> Device | None:
+        return cn001.open_cn001(brightness=self.config.cn001_brightness)
 
     def _maybe_provision(self, now: float) -> None:
         """Put the firmware on a board that has no data channel yet.
@@ -237,13 +275,30 @@ class Daemon:
             log.warning("could not reset the board; unplug and replug it to finish")
         self._provision_backoff.failed(now)
 
-    def _drop_device(self, now: float, reason: str) -> None:
-        log.warning("keypad connection lost: %s", reason)
-        if self.device is not None:
-            self.device.close()
-        self.device = None
-        self.last_frame = None
-        self._device_backoff.failed(now)
+    def _drop_board(self, board: Board, now: float, reason: str) -> None:
+        log.warning("%s connection lost: %s", board.name, reason)
+        if board.device is not None:
+            board.device.close()
+        board.device = None
+        board.last_frame = None
+        board.backoff.failed(now)
+
+    def _connected(self) -> list[Board]:
+        return [board for board in self.boards if board.device is not None]
+
+    def _flash(self, slot: int | None = None) -> None:
+        """Flash a key on every board: a flash is part of what the boards show."""
+        for board in self._connected():
+            try:
+                board.device.flash(slot)
+            except DeviceError as exc:
+                self._drop_board(board, self.clock(), str(exc))
+
+    def close(self) -> None:
+        """Let every board go. The CN001 blanks itself; a Keybow notices silence."""
+        for board in self._connected():
+            board.device.close()
+            board.device = None
 
     # -- herdr ingest ----------------------------------------------------
 
@@ -385,10 +440,9 @@ class Daemon:
             self._flash_git()
 
     def _flash_git(self) -> None:
-        if self.device is not None:
-            # This key, not the function key: flashing that would say
-            # "nothing wants your attention", a different statement.
-            self.device.flash(GIT_SLOT)
+        # This key, not the function key: flashing that would say "nothing
+        # wants your attention", a different statement.
+        self._flash(GIT_SLOT)
 
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
@@ -402,8 +456,7 @@ class Daemon:
         if slot == FN_SLOT:
             target = reducer.next_attention_target(agent_panes, grid, self.settler)
             if target is None:
-                if self.device is not None:
-                    self.device.flash()  # heard you; nothing wants you
+                self._flash()  # heard you; nothing wants you
                 return
             self._focus(target)
             return
@@ -411,16 +464,19 @@ class Daemon:
         if pane_id is not None:
             self._focus(pane_id)
 
-    def _pump_device(self, now: float) -> None:
-        if self.device is None:
-            return
-        try:
-            presses = self.device.read_presses()
-        except DeviceError as exc:
-            self._drop_device(now, str(exc))
-            return
-        for slot in presses:
-            self.handle_press(slot)
+    def _pump_boards(self, now: float) -> None:
+        for board in self._connected():
+            # A press on an earlier board can drop this one -- a flash that
+            # finds it unplugged -- so check again rather than trust the list.
+            if board.device is None:
+                continue
+            try:
+                presses = board.device.read_presses()
+            except DeviceError as exc:
+                self._drop_board(board, now, str(exc))
+                continue
+            for slot in presses:
+                self.handle_press(slot)
 
     # -- rendering -------------------------------------------------------
 
@@ -452,25 +508,31 @@ class Daemon:
         )
 
     def _push(self, frame: Frame, now: float) -> None:
-        if self.device is None:
-            return
-        due = now - self._last_push_at >= HEARTBEAT_SECONDS
-        if frame == self.last_frame and not due:
-            return
-        try:
-            self.device.send_frame(frame)
-        except DeviceError as exc:
-            self._drop_device(now, str(exc))
-            return
-        self.last_frame = frame
-        self._last_push_at = now
+        for board in self._connected():
+            due = now - board.last_push_at >= HEARTBEAT_SECONDS
+            try:
+                if frame != board.last_frame or due:
+                    board.device.send_frame(frame)
+                    board.last_frame = frame
+                    board.last_push_at = now
+                # Boards the host draws move only when redrawn: a blink is
+                # this, every pass, not a new frame.
+                board.device.animate(now)
+            except DeviceError as exc:
+                self._drop_board(board, now, str(exc))
 
     # -- loop ------------------------------------------------------------
 
     def _timeout(self, now: float) -> float:
         candidates = [IDLE_TIMEOUT]
-        if self.device is not None:
-            candidates.append(max(0.0, self._last_push_at + HEARTBEAT_SECONDS - now))
+        for board in self.boards:
+            if board.device is None:
+                candidates.append(board.backoff.wait_for(now))
+                continue
+            candidates.append(max(0.0, board.last_push_at + HEARTBEAT_SECONDS - now))
+            change = board.device.next_change(now)
+            if change is not None:
+                candidates.append(change)
         for settle in (self.settler.next_deadline(now), self.order.next_deadline(now)):
             if settle is not None:
                 candidates.append(settle)
@@ -482,8 +544,6 @@ class Daemon:
             if self._backlog_settling:
                 candidates.append(max(0.0, self._last_event_at + BACKLOG_QUIET_SECONDS - now))
                 candidates.append(max(0.0, self._backlog_deadline - now))
-        if self.device is None:
-            candidates.append(self._device_backoff.wait_for(now))
         if self._git_lookup is not None:
             candidates.append(LOOKUP_POLL_SECONDS)
         return max(0.01, min(candidates))
@@ -496,8 +556,9 @@ class Daemon:
 
             if self.stream is None and self._herdr_backoff.ready(now):
                 self._connect_herdr(now)
-            if self.device is None and self._device_backoff.ready(now):
-                self._connect_device(now)
+            for board in self.boards:
+                if board.device is None and board.backoff.ready(now):
+                    self._connect_board(board, now)
             if self.stream is not None and now >= self._next_status_poll:
                 self._poll_status(now)
             if self.stream is not None and now >= self._next_reconcile:
@@ -524,11 +585,11 @@ class Daemon:
                     selector.register(self.stream.fileno(), selectors.EVENT_READ, "herdr")
                 except (OSError, ValueError) as exc:
                     self._drop_herdr(now, str(exc))
-            if self.device is not None:
+            for board in self._connected():
                 try:
-                    selector.register(self.device.fileno(), selectors.EVENT_READ, "device")
+                    selector.register(board.device.fileno(), selectors.EVENT_READ, board.name)
                 except (OSError, ValueError) as exc:
-                    self._drop_device(now, str(exc))
+                    self._drop_board(board, now, str(exc))
             try:
                 ready = selector.select(self._timeout(now))
             finally:
@@ -549,4 +610,4 @@ class Daemon:
             # status poll, so asking unprompted costs one syscall and turns the
             # worst case from "presses stop forever" into "a press arrives a
             # poll late".
-            self._pump_device(now)
+            self._pump_boards(now)

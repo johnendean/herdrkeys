@@ -23,6 +23,9 @@ class Config:
     serial_port: str | None = None
     salvage_dir: Path | None = None  # defaults beside the config file in effect
     provision: bool = True
+    # The CN001's panel, 0-100. Its LCD is far brighter than the Keybow's LEDs
+    # at the same meaning, and the room decides how bright is right.
+    cn001_brightness: int = 80
 
     def __post_init__(self) -> None:
         if self.salvage_dir is None:
@@ -54,6 +57,8 @@ class Config:
             config.terminal_app = str(raw["terminal_app"])
         if raw.get("socket_path"):
             config.socket_path = Path(str(raw["socket_path"])).expanduser()
+        if "cn001_brightness" in raw:
+            config.cn001_brightness = max(0, min(100, int(raw["cn001_brightness"])))
         if raw.get("serial_port"):
             config.serial_port = str(raw["serial_port"])
         # `state_path` is accepted and ignored: it configured the slot map,

@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/johnendean/herdrkeys/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/johnendean/herdrkeys/actions/workflows/ci.yml?query=branch%3Amain)
 
-Bind a [Pimoroni Keybow 2040](https://shop.pimoroni.com/products/keybow-2040) to
-a running [Herdr](https://herdr.dev) session. The LEDs show what every agent is
-doing; the keys jump to them.
+Bind a [Pimoroni Keybow 2040](https://shop.pimoroni.com/products/keybow-2040),
+a Soomfon CN001, or both, to a running [Herdr](https://herdr.dev) session. The
+keys show what every agent is doing; pressing one jumps to it.
 
 ```
 [12 m mic    ] [13 e return ] [14 r git    ] [15 f fn      ]   <- the feature row
@@ -134,6 +134,54 @@ nothing. The key therefore under-promises rather than over-promises: it can be
 dim somewhere that still opens. A press that genuinely finds nothing flashes
 *that* key, the way the function key flashes when nothing wants you.
 
+## The Soomfon CN001
+
+The CN001 is a second board: fifteen keys behind one LCD panel. Plug it in and
+the daemon finds it; with both boards attached, both show the same agents and a
+press on either means the same thing.
+
+```
+[ 0      ] [ 1      ] [ 2      ] [ 3      ] [ 4      ] | strip
+[ 5      ] [ 6      ] [ 7      ] [ 8      ] [ 9      ] | (dark)
+[ -      ] [ -      ] [ -      ] [14 git  ] [15 fn   ] |
+```
+
+Agents read left to right across the top two rows, like the agents pane
+beside it, so it shows the first ten; the eleventh and twelfth are on the
+Keybow only, though the function key pressed on either board still reaches
+them. The feature row is the bottom row, with the git and function keys at its
+right-hand end as on the Keybow. The three to their left are dark: dictation
+stays on the Keybow, which types Right Option itself, while the CN001 cannot
+type at all. The strip to the right reports nothing when pressed, and stays
+dark.
+
+It says exactly what the Keybow says, with the same rules -- moving means this
+agent wants you, focus is brightness -- in colours an LCD can actually show:
+
+| State     | CN001 |
+| --------- | ----- |
+| `idle`    | its project's colour, as in the sidebar, darkened |
+| `working` | saturated amber |
+| `blocked` | saturated red, **blinking** |
+| `done`    | its project's colour, as in the sidebar, **blinking** |
+| `unknown` | blue |
+
+Project colours are herdrcolor's hex exactly; the Keybow has to saturate them
+to tell them apart on its LEDs, and the LCD does not. State colours are
+deliberately *not* Catppuccin: herdrcolor's palette is Catppuccin's pastel red,
+peach and blue, and a red project's `done` would otherwise be the same blinking
+red as `blocked`. A pastel means *whose*; a saturated colour means *what*. See
+[ADR 0014](docs/adr/0014-boards-that-cannot-run-our-code-are-drawn-by-the-host.md).
+
+**Quit Soomfon's own Stream Controller app first**: it holds the device, and
+`doctor` will say so. Nothing is installed for the CN001 either -- it is driven
+through IOKit and its keys drawn through ImageIO, both via `ctypes`
+([ADR 0015](docs/adr/0015-the-cn001-needs-no-third-party-dependencies.md)).
+
+**A crashed daemon leaves the panel lit.** The Keybow notices six seconds of
+silence and shows "no host"; the CN001 keeps whatever it was last sent,
+indefinitely. A clean stop -- launchd, `kill`, ctrl-c -- blanks it.
+
 ## Install
 
 ```bash
@@ -171,18 +219,20 @@ which half is unhappy:
 config file      ~/.config/herdrkeys/config.toml  (absent, using defaults)
 herdr socket     ~/.config/herdr/herdr.sock  ok  (4 panes, 2 agent panes)
 keybow           /dev/cu.usbmodem11403  (console /dev/cu.usbmodem11401)  ok
+cn001            serial 470B03784011  ok
 daemon           running, pid 35689
 terminal app     /Applications/iTerm.app
 ```
 
 Only one process can hold the keypad's serial port, so when the daemon is
-already running `doctor` reports the port as in use rather than probing it.
+already running `doctor` reports the port as in use rather than probing it. A
+board that is not attached is fine as long as the other one is.
 
 ## Developing without hardware
 
 ```bash
 make venv   # pytest is the only dependency, and only for the tests
-make test   # 216 tests, no keypad and no running Herdr required
+make test   # 285 tests, no keypad and no running Herdr required
 make tui    # the whole daemon against a keypad drawn in the terminal;
             # type 0-9 a-f to simulate a key press
 ```
@@ -233,6 +283,7 @@ activate_terminal = true    # raise the terminal when focusing an agent
 terminal_app      = ""      # override the auto-detected .app bundle
 serial_port       = ""      # override the auto-discovered data port
 socket_path       = ""      # override the Herdr socket
+cn001_brightness  = 80      # the CN001's panel, 0-100
 ```
 
 Keys are numbered row-major with key 0 bottom-left, following PMK's own
@@ -246,7 +297,10 @@ nothing about it and only ever talks in slot numbers.
 ```
 Keybow 2040 ──usb_cdc data, JSON lines──┐
    code.py: palette + animation only    │
-                                        ▼
+                                        │
+Soomfon CN001 ──vendor HID, JPEGs───────┤
+   cn001.py: palette + animation,       │
+   on the host                          ▼
                                    herdrkeys daemon
                                    ordering, settling, attention
                                         │
@@ -264,6 +318,10 @@ in one place, on the device.
 
 Frames are absolute rather than deltas, so a dropped byte or a board reset
 self-heals on the next frame.
+
+The CN001 runs no code of ours, so for it the same job -- turning a frame's
+meanings into what the keys show -- is done on the host, by `cn001.py`, and
+nowhere else. It is redrawn key by key, only where something changed.
 
 Design decisions worth the context are in [`docs/adr/`](docs/adr/); the
 vocabulary is in [`CONTEXT.md`](CONTEXT.md).
