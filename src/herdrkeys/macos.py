@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import logging
 import os
 import threading
 from dataclasses import dataclass
+
+log = logging.getLogger("herdrkeys")
 
 _vp = ctypes.c_void_p
 _long = ctypes.c_long  # CFIndex
@@ -75,6 +78,7 @@ def _load() -> dict[str, ctypes.CDLL]:
     _declare(cf, "CFRetain", _vp, _vp)
     _declare(cf, "CFRunLoopGetCurrent", _vp)
     _declare(cf, "CFRunLoopRunInMode", _i32, _vp, ctypes.c_double, ctypes.c_bool)
+    _declare(cf, "CFRunLoopStop", None, _vp)
     _declare(cf, "CFDataCreate", _vp, _vp, ctypes.c_char_p, _long)
     _declare(cf, "CFDataCreateMutable", _vp, _vp, _long)
     _declare(cf, "CFDataGetLength", _long, _vp)
@@ -234,6 +238,7 @@ class HidDevice:
             ref, ctypes.cast(self._buffer, _vp), input_size, self._callback, None
         )
         self._scheduled = threading.Event()
+        self._loop: int | None = None  # the reader's run loop, once it has one
         self._reader = threading.Thread(target=self._run, name="cn001-reader", daemon=True)
         self._reader.start()
         self._scheduled.wait(2.0)
@@ -242,6 +247,7 @@ class HidDevice:
         mode = _vp.in_dll(self._cf, "kCFRunLoopDefaultMode")
         loop = self._cf.CFRunLoopGetCurrent()
         self._iokit.IOHIDDeviceScheduleWithRunLoop(self._ref, loop, mode)
+        self._loop = loop
         self._scheduled.set()
         try:
             while self._open:
@@ -284,7 +290,19 @@ class HidDevice:
         if not self._open:
             return
         self._open = False
+        # Stopped rather than waited out, so the reader leaves now and not at
+        # the end of its next poll.
+        if self._loop is not None:
+            self._cf.CFRunLoopStop(self._loop)
         self._reader.join(self._POLL_SECONDS * 4)
+        if self._reader.is_alive():
+            # The reader still holds the device ref and the pipe: it may yet
+            # unschedule the one and write to the other. Freeing them under it
+            # would be a crash, or a write into whatever file reuses the
+            # descriptor. Leaking one device's worth is the lesser harm, and a
+            # wait without a limit would hang the daemon on an unplug.
+            log.warning("cn001 reader did not stop; leaving its resources unreleased")
+            return
         self._iokit.IOHIDDeviceClose(self._ref, _OPTIONS_NONE)
         self._cf.CFRelease(self._ref)
         os.close(self._wake_r)
