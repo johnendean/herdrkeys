@@ -5,7 +5,7 @@ Tools' 3.9 -- older than `tomllib`, so the daemon died at import and launchd
 restarted it every ten seconds. Seen for real on the first `make install-agent`.
 """
 
-import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -22,11 +22,14 @@ def python(directory: Path, name: str, *, new_enough: bool) -> None:
 
 
 def run(tmp_path, *pythons):
+    # Only the stand-ins and the one tool the wrapper needs: with /usr/bin on
+    # PATH, a CI runner's own python3 is new enough and starts a real daemon.
     binaries = tmp_path / "bin"
     binaries.mkdir()
+    (binaries / "dirname").symlink_to(shutil.which("dirname"))
     for name, new_enough in pythons:
         python(binaries, name, new_enough=new_enough)
-    env = {"PATH": f"{binaries}:/usr/bin:/bin", "HOME": str(tmp_path), "HERDRKEYS_PYTHON_DIRS": ""}
+    env = {"PATH": str(binaries), "HOME": str(tmp_path), "HERDRKEYS_PYTHON_DIRS": ""}
     return subprocess.run([str(SCRIPT), "run"], env=env, capture_output=True, text=True, timeout=10)
 
 
