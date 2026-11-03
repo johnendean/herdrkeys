@@ -162,8 +162,9 @@ permission**. The first time you press its microphone or return key without it,
 the daemon asks macOS, the key flashes, and the log names the binary to allow
 in System Settings > Privacy & Security > Accessibility. Until then those two
 keys draw their symbols in grey. Dictating on the Keybow never needs it. If the
-daemon crashes mid-dictation, Flow keeps listening until launchd restarts it --
-the first thing it does is let go. See ADR 0017.
+daemon crashes mid-dictation, Flow keeps listening until the daemon next starts
+-- the first thing it does is let go -- or until you tap the physical Right
+Option. See ADR 0017.
 
 It says exactly what the Keybow says -- moving means this agent wants you --
 but where the Keybow can only colour a key, the CN001 can draw on it. So every

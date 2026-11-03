@@ -55,8 +55,8 @@ Keybow costs no permission, and a Return on the CN001 closes it by sending the
 Keybow a frame, not by posting anything.
 
 The daemon sends one release of Right Option every time it starts. A crash
-leaves Flow listening, launchd restarts the daemon, and the release ends the
-orphaned dictation. It also releases on every exit it controls: a clean exit, a
+leaves Flow listening, and the next start's release ends the orphaned
+dictation. It also releases on every exit it controls: a clean exit, a
 signal, and the CN001 being unplugged.
 
 On the CN001, the microphone and return keys are the two leftmost of its bottom
@@ -84,8 +84,10 @@ handshake until `make deploy`. Two of its own releases -- the frame no longer
 naming a microphone, the host going quiet -- stay, as a safety net under a host
 that now decides.
 
-A crash still costs a dictation that runs on until launchd restarts the daemon.
-Flow's own maximum dictation length bounds it beyond that.
+A crash still costs a dictation that runs on until the daemon next starts.
+Under launchd that is seconds. Started by Herdr's startup hook, which nothing
+supervises, it is not until Herdr next starts, so there Flow's own maximum
+dictation length is the real bound -- or a tap on the physical Right Option.
 
 The gap ADR 0006 noted remains: if Flow ends a dictation by itself, the
 microphone stays open in the frame until the next tap or the timeout.
