@@ -84,6 +84,8 @@ def draw(frame: Frame) -> str:
 class TuiDevice:
     """Draws frames to the terminal; hex digits typed on stdin are key presses."""
 
+    can_type = False
+
     def __init__(self, stream=None) -> None:
         self._out = stream or sys.stdout
         self._in = sys.stdin
@@ -107,7 +109,9 @@ class TuiDevice:
         self._out.write("\a[flash] nothing wants your attention\n" if slot is None else f"\a[flash] key {slot}\n")
         self._out.flush()
 
-    def read_presses(self) -> list[int]:
+    def read_keys(self) -> list[tuple[int, bool]]:
+        # A terminal reports a keystroke, not a key going down and coming up,
+        # so every press here is a tap -- which latches the microphone.
         data = self._in.read(1)
         if not data:
             return []
@@ -115,7 +119,7 @@ class TuiDevice:
             slot = int(data, 16)
         except ValueError:
             return []
-        return [slot] if 0 <= slot < SLOT_COUNT else []
+        return [(slot, True), (slot, False)] if 0 <= slot < SLOT_COUNT else []
 
     def close(self) -> None:
         if self._saved is not None:

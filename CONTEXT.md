@@ -122,10 +122,15 @@ for some other branch is never *its* pull request, however few others there are.
 A draft counts. Only GitHub's are known about; elsewhere, and whenever finding
 out fails or is slow, the git key behaves as if there were none.
 
-**Microphone key** — Slot 12. Held, it makes the keypad hold down the hotkey
-Wispr Flow dictates on; tapped, it **latches** that hotkey down until the next
-tap. The frame says which key it is; the firmware decides which keystroke that
-means, exactly as it decides what `blocked` looks like.
+**Microphone** — Wispr Flow listening because a keypad is holding down the
+hotkey it dictates on. There is one, however many boards are attached: opened
+on one board it is open on all of them, and any board's microphone or return
+key closes it.
+
+**Microphone key** — Slot 12. Held, it opens the **microphone** for as long as
+it is held; tapped, it **latches** it open until the next tap. The frame says
+which key it is; what keystroke that means is decided by whatever types for the
+board -- the board itself where it can, the daemon where it cannot.
 
 **Return key** — Slot 13, beside the microphone key. Types Return, for sending
 what was just dictated. It is the second half of dictation rather than a key of
@@ -133,8 +138,8 @@ its own, which is why it sits where it does and wears the microphone's hue. Whil
 the microphone is open, a press closes it and types nothing: the dictated text
 has not landed yet, and Return then would send the prompt without it.
 
-**Latch** — The microphone held open with no finger on the key. It pulses while
-latched, and ends on a second tap, on a five-minute timeout, or on anything that
+**Latch** — The microphone held open with no finger on any key. Every
+microphone key pulses while it is latched, and ends on a second tap, on a five-minute timeout, or on anything that
 would otherwise release the key.
 
 **Board** — One attached keypad: a Keybow 2040 or a Soomfon CN001. Every board
@@ -144,5 +149,6 @@ looks like on its own keys; whether that is decided on the board or on the host
 depends only on whether the board can run code of ours.
 
 **Daemon** — The host process. It is the only component that talks to Herdr, and
-the only component that decides anything; the keypad renders frames, reports key
-presses, and types the keystrokes the microphone and return keys stand for.
+the only component that decides anything; the keypad renders frames and reports
+key presses. A board that can type does so for its own microphone and return
+keys; for a board that cannot, the daemon types them.

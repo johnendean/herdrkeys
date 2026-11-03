@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import selectors
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -22,7 +23,8 @@ from . import remote as remote_module
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
 from .herdr_state import HerdrState
-from .model import FN_SLOT, GIT_SLOT, Frame
+from .microphone import Microphone, Typist
+from .model import FN_SLOT, GIT_SLOT, MIC_SLOT, RETURN_SLOT, Frame
 from .paths import legacy_slot_map_path
 from .settling import OrderSettler, Settler
 
@@ -140,7 +142,9 @@ def _go_to_git(cwd: str) -> bool:
 
 
 class Daemon:
-    def __init__(self, config: Config, *, clock=time.monotonic, device_factory=None) -> None:
+    def __init__(
+        self, config: Config, *, clock=time.monotonic, device_factory=None, host_typist=None
+    ) -> None:
         self.config = config
         self.clock = clock
         self.device_factory = device_factory
@@ -177,6 +181,19 @@ class Daemon:
         # than done from the worker.
         self._git_lookup: Future | None = None
         self._spawn = _in_background
+        # The one microphone, and what types for a board that cannot (ADR 0017).
+        if host_typist is None:
+            from .macos import HostTypist
+
+            host_typist = HostTypist()
+        self.host_typist = host_typist
+        self.microphone = Microphone()
+        self._asked_to_type = False
+        # A daemon that crashed holding the hotkey left Flow listening, and
+        # launchd restarting it is what brings us here: let go before anything
+        # else. A release with nothing held does nothing, so this costs nothing
+        # on an ordinary start.
+        self._quietly(lambda: host_typist.hold(False))
 
     # -- connections -----------------------------------------------------
 
@@ -233,7 +250,9 @@ class Daemon:
         return SerialDevice(port)
 
     def _open_cn001(self, now: float) -> Device | None:
-        return cn001.open_cn001(brightness=self.config.cn001_brightness)
+        return cn001.open_cn001(
+            brightness=self.config.cn001_brightness, can_type=self.host_typist.can_type
+        )
 
     def _maybe_provision(self, now: float) -> None:
         """Put the firmware on a board that has no data channel yet.
@@ -275,9 +294,20 @@ class Daemon:
             log.warning("could not reset the board; unplug and replug it to finish")
         self._provision_backoff.failed(now)
 
+    def _quietly(self, typing) -> None:
+        """Type something that must not take the daemon down if it will not go."""
+        try:
+            typing()
+        except (OSError, DeviceError) as exc:
+            log.warning("could not type: %s", exc)
+
     def _drop_board(self, board: Board, now: float, reason: str) -> None:
         log.warning("%s connection lost: %s", board.name, reason)
         if board.device is not None:
+            # A CN001 unplugged mid-dictation would otherwise leave the host
+            # holding Right Option for a board that is no longer there.
+            typist = self._typist(board.device)
+            self._quietly(lambda: self.microphone.lost(typist))
             board.device.close()
         board.device = None
         board.last_frame = None
@@ -296,6 +326,7 @@ class Daemon:
 
     def close(self) -> None:
         """Let every board go. The CN001 blanks itself; a Keybow notices silence."""
+        self._quietly(self.microphone.close)
         for board in self._connected():
             board.device.close()
             board.device = None
@@ -444,6 +475,59 @@ class Daemon:
         # wants your attention", a different statement.
         self._flash(GIT_SLOT)
 
+    def _typist(self, device: Device) -> Typist:
+        """Whatever types for this board: the board itself where it can."""
+        return device if device.can_type else self.host_typist
+
+    def _can_type(self, typist: Typist) -> bool:
+        # A board types for itself without asking anyone; only the host needs
+        # the permission.
+        return typist is not self.host_typist or self.host_typist.can_type()
+
+    def _ask_to_type(self) -> None:
+        """Ask macOS, once a run, to let the daemon type for the CN001.
+
+        From here and nowhere else: the permission goes to whichever process
+        asks, so a command run in a terminal would grant the terminal, not the
+        daemon. And only on a press: someone who has just tried to dictate has
+        asked for it, which is the consent ADR 0004 wants.
+        """
+        if self._asked_to_type:
+            return
+        self._asked_to_type = True
+        log.warning(
+            "the cn001 cannot type: allow %s in System Settings > Privacy & Security > Accessibility",
+            sys.executable,
+        )
+        self._quietly(self.host_typist.ask)
+
+    def handle_key(self, board: Board, slot: int, down: bool, now: float) -> None:
+        device = board.device
+        if slot in (MIC_SLOT, RETURN_SLOT) and down:
+            # Without the permission macOS drops what we post without a word,
+            # so a press that cannot type says so on the key you pressed
+            # rather than lighting a microphone nobody is listening to.
+            if not self._can_type(self._typist(device)):
+                self._ask_to_type()
+                try:
+                    device.flash(slot)
+                except DeviceError as exc:
+                    self._drop_board(board, now, str(exc))
+                return
+        if slot == MIC_SLOT:
+            typist = self._typist(device)
+            if down:
+                self.microphone.down(typist, now)
+            else:
+                self.microphone.up(typist, now)
+            return
+        if not down:
+            return  # every other key acts as it goes down
+        if slot == RETURN_SLOT:
+            self.microphone.press_return(self._typist(device))
+            return
+        self.handle_press(slot)
+
     def handle_press(self, slot: int) -> None:
         agent_panes = self.state.agent_panes()
         # The settled grid, which is the one the keys were drawn from. Reading
@@ -470,17 +554,25 @@ class Daemon:
             # finds it unplugged -- so check again rather than trust the list.
             if board.device is None:
                 continue
+            device = board.device
             try:
-                presses = board.device.read_presses()
+                keys = device.read_keys()
             except DeviceError as exc:
                 self._drop_board(board, now, str(exc))
                 continue
-            for slot in presses:
-                self.handle_press(slot)
+            for slot, down in keys:
+                if board.device is not device:
+                    break  # dropped by an earlier key in this same read
+                try:
+                    self.handle_key(board, slot, down, now)
+                except DeviceError as exc:
+                    # A Keybow told to type, unplugged under the telling.
+                    self._drop_board(board, now, str(exc))
 
     # -- rendering -------------------------------------------------------
 
     def render(self, now: float) -> Frame:
+        self._quietly(lambda: self.microphone.tick(now))
         agent_panes = self.state.agent_panes()
         live = self.state.live_pane_ids()
         for pane_id, pane in agent_panes.items():
@@ -505,6 +597,7 @@ class Daemon:
             connected=self.stream is not None,
             git_page=git_page,
             git_looking=self._git_lookup is not None,
+            mic=self.microphone.state,
         )
 
     def _push(self, frame: Frame, now: float) -> None:
@@ -546,6 +639,9 @@ class Daemon:
                 candidates.append(max(0.0, self._backlog_deadline - now))
         if self._git_lookup is not None:
             candidates.append(LOOKUP_POLL_SECONDS)
+        latch = self.microphone.next_change(now)
+        if latch is not None:
+            candidates.append(latch)
         return max(0.01, min(candidates))
 
     def run_forever(self) -> None:

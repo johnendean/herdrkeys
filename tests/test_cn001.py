@@ -2,7 +2,18 @@ import pytest
 
 from herdrkeys import cn001
 from herdrkeys.device import DeviceError
-from herdrkeys.model import FN_SLOT, GIT_SLOT, MIC_SLOT, RETURN_SLOT, SLOT_COUNT, Frame
+from herdrkeys.model import (
+    FN_SLOT,
+    GIT_SLOT,
+    MIC,
+    MIC_LATCHED,
+    MIC_OPEN,
+    MIC_SLOT,
+    RETURN,
+    RETURN_SLOT,
+    SLOT_COUNT,
+    Frame,
+)
 
 
 class FakeHid:
@@ -98,8 +109,8 @@ def test_the_feature_row_is_the_bottom_row_with_git_and_function_at_its_right():
     assert cn001.SLOT_TO_KEY[FN_SLOT] == cn001.hardware_key(2, 4)
 
 
-def test_the_eleventh_and_twelfth_agents_and_dictation_are_not_on_this_board():
-    for slot in (10, 11, MIC_SLOT, RETURN_SLOT):
+def test_the_eleventh_and_twelfth_agents_are_not_on_this_board():
+    for slot in (10, 11):
         assert slot not in cn001.SLOT_TO_KEY
 
 
@@ -259,6 +270,77 @@ def test_the_feature_row_keeps_its_flat_colours():
     assert cn001.look_for("-", None, 0.5, flashing=False) == cn001.DARK
 
 
+# -- dictation (ADR 0017) ------------------------------------------------------
+
+
+def cyan(rgb):
+    return rgb[0] < 40 and rgb[1] > 120 and rgb[2] > 120
+
+
+def test_the_microphone_and_return_keys_draw_symbols_of_their_own():
+    mic = cn001.look_for(MIC, None, 0.5, flashing=False)
+    ret = cn001.look_for(RETURN, None, 0.5, flashing=False)
+    assert mic.mark and ret.mark and mic.mark != ret.mark
+    for look in (mic, ret):
+        pixels = cn001.render(look)
+        assert any(cyan(at(pixels, x, y)) for x in range(96) for y in range(96)), "the microphone's hue"
+
+
+def test_closed_open_and_latched_are_told_apart_and_only_latched_moves():
+    closed, open_, latched = (
+        [cn001.look_for(code, None, t, flashing=False) for t in (0.0, 0.3, 0.6, 0.9)]
+        for code in (MIC, MIC_OPEN, MIC_LATCHED)
+    )
+    assert len(set(closed)) == 1 and len(set(open_)) == 1, "steady"
+    assert len(set(latched)) > 1, "a latch breathes, so it cannot be forgotten"
+    assert closed[0] != open_[0]
+    assert sum(open_[0].background) > sum(closed[0].background), "open is the brighter"
+
+
+def test_the_return_key_is_the_dimmer_of_the_two():
+    mic = cn001.look_for(MIC, None, 0.5, flashing=False)
+    ret = cn001.look_for(RETURN, None, 0.5, flashing=False)
+    assert sum(ret.background) < sum(mic.background)
+
+
+def test_without_the_permission_their_symbols_are_greyed_but_the_microphone_still_shows():
+    # Another board may have opened the microphone; this one cannot type, and
+    # says so, but there is still only one microphone to show.
+    for code in (MIC, RETURN):
+        look = cn001.look_for(code, None, 0.5, flashing=False, can_type=False)
+        pixels = cn001.render(look)
+        assert not any(cyan(at(pixels, x, y)) for x in range(96) for y in range(96)), code
+    assert (
+        cn001.look_for(MIC_OPEN, None, 0.5, flashing=False, can_type=False).background
+        == cn001.look_for(MIC_OPEN, None, 0.5, flashing=False).background
+    )
+
+
+def test_a_press_on_either_flashes_it():
+    for code in (MIC, RETURN):
+        assert cn001.look_for(code, None, 0.5, flashing=True) == cn001.Look(cn001.FLASH), code
+
+
+def test_the_board_wakes_for_a_latched_microphone():
+    assert cn001.next_change(frame({MIC_SLOT: MIC_LATCHED}).keys, 0.1, 0.0) is not None
+    assert cn001.next_change(frame({MIC_SLOT: MIC_OPEN}).keys, 0.1, 0.0) is None
+
+
+def test_the_board_asks_whether_it_can_type_when_it_draws():
+    hid = FakeHid()
+    allowed = [False]
+    board = cn001.CN001Device(hid, clock=Clock(0.5), can_type=lambda: allowed[0])
+    board.send_frame(frame({MIC_SLOT: MIC}))
+    board.animate(0.6)
+    sent = len(hid.reports)
+
+    allowed[0] = True
+    board.animate(1.0)
+    redrawn = hid.reports[sent:]
+    assert redrawn, "granting it shows without a restart"
+    assert redrawn[0][:8] == b"CRT\0\0BAT" and redrawn[0][12] == cn001.SLOT_TO_KEY[MIC_SLOT]
+
+
 def test_the_board_asks_for_a_pass_only_while_something_moves():
     still = frame({0: "i", 1: "w"})
     assert cn001.next_change(still.keys, 0.1, 0.0) is None
@@ -322,18 +404,25 @@ def test_a_bare_flash_is_the_function_keys_and_a_named_one_is_that_keys():
     assert shown[cn001.SLOT_TO_KEY[FN_SLOT]] == bytes(cn001.FN_IDLE)
 
 
-def test_presses_fire_on_the_way_down_and_name_slots():
+def test_keys_report_both_edges_and_name_slots():
+    # Up as well as down: the microphone tells a hold from a tap by when the key
+    # comes up (ADR 0017).
     hid = FakeHid()
     board = cn001.CN001Device(hid, clock=Clock())
     hid.queued = [key_report(13, True), key_report(13, False), key_report(3, True)]
-    assert board.read_presses() == [0, FN_SLOT]
+    assert board.read_keys() == [(0, True), (0, False), (FN_SLOT, True)]
 
 
-def test_the_keys_kept_for_dictation_do_nothing():
+def test_dictation_sits_at_the_left_of_the_bottom_row_as_on_the_keybow():
+    assert cn001.SLOT_TO_KEY[MIC_SLOT] == cn001.hardware_key(2, 0)
+    assert cn001.SLOT_TO_KEY[RETURN_SLOT] == cn001.hardware_key(2, 1)
+
+
+def test_the_key_between_return_and_git_does_nothing():
     hid = FakeHid()
     board = cn001.CN001Device(hid, clock=Clock())
-    hid.queued = [key_report(cn001.hardware_key(2, 0), True)]
-    assert board.read_presses() == []
+    hid.queued = [key_report(cn001.hardware_key(2, 2), True)]
+    assert board.read_keys() == []
 
 
 def test_an_unplugged_board_is_a_device_error():

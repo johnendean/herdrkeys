@@ -8,6 +8,7 @@ from herdrkeys.config import Config
 from herdrkeys.daemon import Backoff, Daemon
 from herdrkeys import remote as remote_module
 from herdrkeys.device import FakeDevice
+from herdrkeys.microphone import LATCH_TIMEOUT
 from herdrkeys.model import (
     FEATURE_SLOTS,
     FN_SLOT,
@@ -15,10 +16,38 @@ from herdrkeys.model import (
     GIT_NO_PAGE,
     GIT_PAGE,
     GIT_SLOT,
+    MIC,
+    MIC_LATCHED,
+    MIC_OPEN,
     MIC_SLOT,
     RETURN_SLOT,
     AgentState,
 )
+
+
+class FakeHostTypist:
+    """The daemon's own typist, for a board that cannot type (ADR 0017)."""
+
+    def __init__(self):
+        self.allowed = True
+        self.holding = False
+        self.holds = []  # every hold(on) it was told, in order
+        self.returns = 0
+        self.asked = 0
+
+    def can_type(self) -> bool:
+        return self.allowed
+
+    def ask(self) -> bool:
+        self.asked += 1
+        return False
+
+    def hold(self, on: bool) -> None:
+        self.holding = on
+        self.holds.append(on)
+
+    def type_return(self) -> None:
+        self.returns += 1
 
 
 @pytest.fixture
@@ -32,7 +61,7 @@ def rig(tmp_path, monkeypatch):
 
     config = Config(settle_seconds=0.0, activate_terminal=True)
     device = FakeDevice()
-    instance = Daemon(config, device_factory=lambda: device)
+    instance = Daemon(config, device_factory=lambda: device, host_typist=FakeHostTypist())
     instance.boards[0].device = device
     return instance, device, focused, activated
 
@@ -91,23 +120,51 @@ def test_activation_can_be_switched_off(rig):
     assert focused == ["w1:p1"] and activated == []
 
 
-def test_pressing_the_mic_key_does_nothing_on_the_host(rig):
-    # The keystroke is the board's job. The host must not focus an agent, must
-    # not flash "nothing wants you", and must not care that the press happened.
+def press(instance, device, slot, now, *, up_after=None):
+    """A key going down on `device`, and -- given `up_after` -- coming up again."""
+    device.queued_keys = [(slot, True)]
+    instance._pump_boards(now)
+    if up_after is not None:
+        device.queued_keys = [(slot, False)]
+        instance._pump_boards(now + up_after)
+
+
+def test_the_host_holds_the_microphone_open_for_a_board_that_cannot_type(rig):
+    instance, device, focused, _ = rig
+    host = instance.host_typist
+    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
+
+    press(instance, device, MIC_SLOT, 2.0)
+    assert host.holding
+    assert instance.render(2.0).keys[MIC_SLOT] == MIC_OPEN, "every board shows the one microphone"
+
+    device.queued_keys = [(MIC_SLOT, False)]
+    instance._pump_boards(5.0)
+    assert not host.holding
+    assert instance.render(5.0).keys[MIC_SLOT] == MIC
+    assert focused == [] and device.flashes == 0, "the microphone focuses nothing"
+
+
+def test_return_on_a_board_that_cannot_type_is_typed_by_the_host(rig):
     instance, device, focused, _ = rig
     load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
 
-    instance.handle_press(MIC_SLOT)
+    press(instance, device, RETURN_SLOT, 2.0, up_after=0.1)
+    assert instance.host_typist.returns == 1
     assert focused == [] and device.flashes == 0
 
 
-def test_pressing_the_return_key_does_nothing_on_the_host(rig):
-    # Same as the microphone: the board types it, and the host stays out of it.
-    instance, device, focused, _ = rig
-    load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "blocked")], "w1:p1")
+def test_a_board_that_can_type_types_for_itself(rig):
+    instance, device, _focused, _ = rig
+    device.can_type = True
 
-    instance.handle_press(RETURN_SLOT)
-    assert focused == [] and device.flashes == 0
+    press(instance, device, MIC_SLOT, 2.0)
+    assert device.holding and not instance.host_typist.holding
+
+    press(instance, device, RETURN_SLOT, 3.0)
+    assert not device.holding, "Return closes the microphone first"
+    press(instance, device, RETURN_SLOT, 4.0)
+    assert device.returns == 1 and instance.host_typist.returns == 0
 
 
 def test_no_feature_key_can_focus_an_agent(rig):
@@ -406,7 +463,7 @@ def test_presses_are_read_even_when_the_selector_never_reports_the_keypad(rig, m
     monkeypatch.setattr(daemon_module.herdr, "EventStream",
                         lambda path, **kw: (_ for _ in ()).throw(OSError("no herdr")))
     device.fileno = lambda: 0
-    device.queued_presses = [0]
+    device.queued_keys = [(0, True)]
 
     ticks = iter([0.0, 0.01, 0.02])
 
@@ -953,7 +1010,7 @@ def test_every_board_is_shown_the_same_frame(two_boards):
 def test_a_press_on_either_board_means_the_same_thing(two_boards):
     instance, _first, second, focused = two_boards
     load(instance, [agent_pane("w1:p1", "idle"), agent_pane("w2:p1", "idle")], None)
-    second.queued_presses = [1]
+    second.queued_keys = [(1, True)]
     instance._pump_boards(2.0)
     assert focused == ["w2:p1"]
 
@@ -1014,7 +1071,102 @@ def test_a_board_dropped_by_an_earlier_press_is_not_read(two_boards):
         raise daemon_module.DeviceError("gone")
 
     second.flash = unplugged
-    first.queued_presses = [FN_SLOT]
+    first.queued_keys = [(FN_SLOT, True)]
     instance._pump_boards(2.0)
     assert instance.boards[1].device is None
     assert instance.boards[0].device is first, "the daemon and the first board carry on"
+
+
+# -- the one microphone across boards (ADR 0017) -----------------------------
+
+
+def test_return_on_one_board_closes_the_microphone_the_other_holds(two_boards):
+    instance, keybow, cn001, _ = two_boards
+    keybow.can_type = True
+    press(instance, keybow, MIC_SLOT, 2.0, up_after=0.1)  # latched on the Keybow
+
+    press(instance, cn001, RETURN_SLOT, 3.0)
+    assert not keybow.holding, "there is one microphone, whichever board holds it"
+    assert instance.host_typist.returns == 0 and keybow.returns == 0
+
+
+def test_losing_the_board_that_opened_the_microphone_closes_it(two_boards):
+    instance, keybow, cn001, _ = two_boards
+    press(instance, cn001, MIC_SLOT, 2.0, up_after=0.1)
+    assert instance.host_typist.holding
+
+    instance._drop_board(instance.boards[1], 3.0, "unplugged")
+    assert not instance.host_typist.holding, "a CN001 unplugged mid-dictation must not leave Flow listening"
+
+
+def test_a_starting_daemon_lets_go_of_what_a_crashed_one_held():
+    # A crash leaves Flow listening -- measured, not supposed -- and launchd
+    # restarts us, so starting is the moment to let go (ADR 0017).
+    host = FakeHostTypist()
+    Daemon(Config(), device_factory=FakeDevice, host_typist=host)
+    assert host.holds == [False]
+
+
+def test_closing_the_daemon_closes_the_microphone(rig):
+    instance, device, _focused, _ = rig
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+
+    instance.close()
+    assert not instance.host_typist.holding
+
+
+def test_without_the_permission_a_press_flashes_rather_than_pretending(rig):
+    instance, device, _focused, _ = rig
+    instance.host_typist.allowed = False
+
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+    press(instance, device, RETURN_SLOT, 3.0)
+    assert not instance.host_typist.holding and instance.host_typist.returns == 0
+    assert instance.render(3.0).keys[MIC_SLOT] == MIC, "the frame must not claim a microphone that is not open"
+    assert device.flashed_slots == [MIC_SLOT, RETURN_SLOT]
+
+
+def test_a_board_that_types_for_itself_needs_no_permission(rig):
+    instance, device, _focused, _ = rig
+    device.can_type = True
+    instance.host_typist.allowed = False
+
+    press(instance, device, MIC_SLOT, 2.0)
+    assert device.holding and device.flashes == 0
+
+
+def test_a_latch_times_out_on_its_own_and_the_loop_wakes_for_it(rig):
+    instance, device, _focused, _ = rig
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+    assert instance.render(3.0).keys[MIC_SLOT] == MIC_LATCHED
+    assert instance._timeout(2.1 + LATCH_TIMEOUT - 0.005) <= 0.01
+
+    instance.render(2.1 + LATCH_TIMEOUT + 1)
+    assert not instance.host_typist.holding
+    assert instance.render(2.1 + LATCH_TIMEOUT + 1).keys[MIC_SLOT] == MIC
+
+
+def test_the_first_press_that_needs_the_permission_asks_for_it_once(rig):
+    # macOS gives the permission to whichever process asks, so the daemon asks
+    # itself -- and only when you have just tried to dictate (ADR 0017).
+    instance, device, _focused, _ = rig
+    instance.host_typist.allowed = False
+    assert instance.host_typist.asked == 0, "nothing is asked for before it is wanted"
+
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+    press(instance, device, RETURN_SLOT, 3.0)
+    press(instance, device, MIC_SLOT, 4.0, up_after=0.1)
+    assert instance.host_typist.asked == 1, "one dialog, not one per press"
+
+
+def test_a_keybow_that_cannot_be_told_to_type_is_dropped_not_the_daemon(two_boards):
+    instance, keybow, cn001, _ = two_boards
+    keybow.can_type = True
+
+    def unplugged(on):
+        raise daemon_module.DeviceError("gone")
+
+    keybow.hold = unplugged
+    press(instance, keybow, MIC_SLOT, 2.0)
+    assert instance.boards[0].device is None
+    assert instance.render(2.0).keys[MIC_SLOT] == MIC, "a microphone nobody holds is not open"

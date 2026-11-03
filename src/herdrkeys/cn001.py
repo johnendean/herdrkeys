@@ -24,7 +24,7 @@ from typing import NamedTuple
 
 from .device import DeviceError
 from .macos import HidDevice, encode_jpeg, find_hid, release
-from .model import FN_SLOT, GIT_SLOT, Frame
+from .model import FN_SLOT, GIT_SLOT, MIC_SLOT, RETURN_SLOT, Frame
 
 VENDOR_ID = 0x1500
 PRODUCT_ID = 0x3003
@@ -51,11 +51,13 @@ def hardware_key(row: int, column: int) -> int:
 
 
 # Agents read like the agents pane beside it: the first ten, left to right
-# across the top two rows. The feature row is the bottom row, with the git and
-# function keys at its right-hand end as on the Keybow; the three to their left
-# are kept for dictation, which stays on the Keybow (ADR 0014).
+# across the top two rows. The feature row is the bottom row in the Keybow's
+# order: the microphone and return keys at its left, the git and function keys
+# at its right, and the one between them holds nothing (ADR 0017).
 SLOT_TO_KEY: dict[int, int] = {
     **{slot: hardware_key(slot // COLUMNS, slot % COLUMNS) for slot in range(10)},
+    MIC_SLOT: hardware_key(2, 0),
+    RETURN_SLOT: hardware_key(2, 1),
     GIT_SLOT: hardware_key(2, 3),
     FN_SLOT: hardware_key(2, 4),
 }
@@ -131,6 +133,7 @@ class Look(NamedTuple):
     background: RGB
     mark: str | None = None  # the state code whose mark it wears
     focused: bool = False
+    muted: bool = False  # its mark greyed: a key this board cannot act on
 
 
 OFF: RGB = (0, 0, 0)
@@ -153,6 +156,17 @@ FLASH: RGB = (230, 230, 230)        # "heard you"
 GIT_PAGE: RGB = (108, 0, 168)       # the focused agent's directory has a page
 GIT_NO_PAGE: RGB = (20, 0, 32)      # ...and this one does not
 GIT_LOOKING: RGB = (170, 0, 255)    # a press is finding out where to go
+
+# The microphone and return keys (ADR 0017), in the Keybow's cyan: the one hue
+# no agent state uses. Each draws its symbol, and the key behind it says how the
+# one microphone is -- dim closed, bright open, breathing latched. Return is
+# the dimmer of the two, so the microphone stays the key the eye finds first.
+MIC_IDLE: RGB = (0, 52, 62)
+MIC_OPEN: RGB = (0, 150, 180)
+RETURN_IDLE: RGB = (0, 30, 36)
+SYMBOL: RGB = (0, 210, 240)          # the symbols themselves
+MUTED: RGB = (96, 96, 96)            # ...greyed, when this board cannot type
+MIC_PULSE_SECONDS = 0.9
 
 BLINK_HZ = 1.4
 PULSE_SECONDS = 2.0
@@ -182,10 +196,22 @@ def _pulse(now: float) -> float:
     return 0.25 + 0.75 * (1.0 - abs(phase * 2.0 - 1.0))
 
 
-def look_for(code: str, colour: str | None, now: float, *, flashing: bool) -> Look:
-    """What a key should be showing at `now`."""
+def look_for(
+    code: str, colour: str | None, now: float, *, flashing: bool, can_type: bool = True
+) -> Look:
+    """What a key should be showing at `now`.
+
+    `can_type` is whether a press on this board can type. Without it the
+    microphone and return keys grey their symbols -- but still show the one
+    microphone, which another board may have opened.
+    """
     if code == "-":
         return DARK
+    if code in ("m", "o", "l", "e"):
+        if flashing:
+            return Look(FLASH)
+        mark = "e" if code == "e" else "m"
+        return Look(_dictation_background(code, now), mark, muted=not can_type)
     if code == "f":
         return Look(FLASH if flashing else FN_IDLE)
     if code == "x":
@@ -198,10 +224,23 @@ def look_for(code: str, colour: str | None, now: float, *, flashing: bool) -> Lo
         return Look(GIT_PAGE if code == "r" else GIT_NO_PAGE)
     state = code.lower()
     if state not in ("i", *MARKS):
-        return DARK  # a meaning this board does not show, such as the microphone
+        return DARK  # a meaning this board does not show
     if state in ("b", "d") and _blink_off(now):
         return DARK
     return Look(parse_hex(colour) or NEUTRAL, state if state in MARKS else None, code.isupper())
+
+
+def _dictation_background(code: str, now: float) -> RGB:
+    if code == "e":
+        return RETURN_IDLE
+    if code == "o":
+        return MIC_OPEN
+    if code == "l":
+        # Stepped like every pulse here: the panel is redrawn, not dimmed.
+        stepped = now - now % PULSE_STEP_SECONDS
+        phase = (stepped % MIC_PULSE_SECONDS) / MIC_PULSE_SECONDS
+        return _scaled(MIC_OPEN, 0.3 + 0.7 * (1.0 - abs(phase * 2.0 - 1.0)))
+    return MIC_IDLE
 
 
 def next_change(frame_keys: str, now: float, flash_until: float) -> float | None:
@@ -211,7 +250,7 @@ def next_change(frame_keys: str, now: float, flash_until: float) -> float | None
     if any(code.lower() in ("b", "d") for code in shown):
         period = 1.0 / (BLINK_HZ * 2)
         waits.append(period - (now % period))
-    if "x" in shown:
+    if "x" in shown or "l" in shown:
         waits.append(PULSE_STEP_SECONDS - (now % PULSE_STEP_SECONDS))
     if flash_until > now:
         waits.append(flash_until - now)
@@ -258,6 +297,20 @@ MARKS: dict[str, tuple[tuple, ...]] = {
         ("arc", 0, -7, 8, 3.5, -180, 90, 1.0),
         ("stroke", 0, 1, 0, 5, 3.5, 1.0),
         ("dot", 0, 13, 4.0, 1.0),
+    ),
+    # the microphone key: a microphone -- capsule, cradle, stand
+    "m": (
+        ("stroke", 0, -13, 0, -2, 6.0, 1.0),
+        ("arc", 0, -4, 11, 2.0, 0, 180, 1.0),
+        ("stroke", 0, 7, 0, 13, 2.0, 1.0),
+        ("stroke", -7, 14, 7, 14, 2.0, 1.0),
+    ),
+    # the return key: a return arrow
+    "e": (
+        ("stroke", 12, -12, 12, 4, 3.0, 1.0),
+        ("stroke", 12, 4, -10, 4, 3.0, 1.0),
+        ("stroke", -10, 4, -3, -3, 3.0, 1.0),
+        ("stroke", -10, 4, -3, 11, 3.0, 1.0),
     ),
 }
 
@@ -323,7 +376,7 @@ def _shown(look: Look) -> list[list[RGB]]:
                 elif edge < BORDER_WIDTH + KEYLINE_WIDTH:
                     rows[y][x] = BADGE
     if look.mark:
-        colour = MARK_COLOUR[look.mark]
+        colour = MUTED if look.muted else MARK_COLOUR.get(look.mark, SYMBOL)
         reach = math.ceil(BADGE_RADIUS) + 1
         for y in range(n // 2 - reach, n // 2 + reach):
             for x in range(n // 2 - reach, n // 2 + reach):
@@ -364,9 +417,14 @@ class CN001Device:
     so a blink costs a couple of reports per key rather than a panel's worth.
     """
 
-    def __init__(self, hid, *, brightness: int = 80, clock=time.monotonic) -> None:
+    can_type = False  # the manufacturer's firmware types nothing we ask it to
+
+    def __init__(self, hid, *, brightness: int = 80, clock=time.monotonic, can_type=lambda: True) -> None:
         self._hid = hid
         self._clock = clock
+        # Asked on every draw rather than once, so granting the permission
+        # shows on the keys without restarting anything.
+        self._can_type = can_type
         self._frame: Frame | None = None
         self._flash_until = 0.0
         self._flash_slot: int | None = None
@@ -400,10 +458,15 @@ class CN001Device:
             return wanted
         # A flash names its key; one that names none is the function key's.
         flashing_slot = FN_SLOT if self._flash_slot is None else self._flash_slot
+        can_type = self._can_type()
         for slot, key in SLOT_TO_KEY.items():
             flashing = now < self._flash_until and slot == flashing_slot
             wanted[key] = look_for(
-                self._frame.keys[slot], self._frame.colours[slot], now, flashing=flashing
+                self._frame.keys[slot],
+                self._frame.colours[slot],
+                now,
+                flashing=flashing,
+                can_type=can_type,
             )
         return wanted
 
@@ -450,18 +513,18 @@ class CN001Device:
             return None
         return next_change(self._frame.keys, now, self._flash_until)
 
-    def read_presses(self) -> list[int]:
-        presses = []
+    def read_keys(self) -> list[tuple[int, bool]]:
+        keys = []
         for report in self._hid.read():
             parsed = parse_input(report)
             if parsed is None:
                 continue
             key, down = parsed
-            # Presses fire on the way down, as on the Keybow. A key that holds
-            # no slot -- the three kept for dictation -- does nothing.
-            if down and key in KEY_TO_SLOT:
-                presses.append(KEY_TO_SLOT[key])
-        return presses
+            # Both edges, as on the Keybow. A key that holds no slot -- the
+            # one between return and git -- does nothing.
+            if key in KEY_TO_SLOT:
+                keys.append((KEY_TO_SLOT[key], down))
+        return keys
 
     def close(self) -> None:
         """Blank the panel. A crash cannot, and the panel never gives up by itself."""
@@ -474,7 +537,7 @@ class CN001Device:
             self._hid.close()
 
 
-def open_cn001(*, brightness: int) -> CN001Device | None:
+def open_cn001(*, brightness: int, can_type=lambda: True) -> CN001Device | None:
     """The attached CN001, opened and blank; None when there is not one."""
     found = find_hid(VENDOR_ID, PRODUCT_ID, USAGE_PAGE)
     if not found:
@@ -487,7 +550,7 @@ def open_cn001(*, brightness: int) -> CN001Device | None:
     except OSError as exc:
         raise DeviceError(f"cn001: {exc}") from exc
     try:
-        return CN001Device(hid, brightness=brightness)
+        return CN001Device(hid, brightness=brightness, can_type=can_type)
     except DeviceError:
         hid.close()
         raise
