@@ -165,6 +165,16 @@ def test_a_key_without_a_project_colour_is_neutral_behind_its_mark():
     assert cn001.look_for("w", "nonsense", 0.5, flashing=False).background == cn001.NEUTRAL
 
 
+def test_a_colour_with_an_impossible_channel_is_no_colour_at_all():
+    # Channels that are not exactly two hex digits would reach the encoder as
+    # -1 or 300, and fail the board rather than fall back.
+    for bad in ("#-1ffff", "#+1ffff", "#0x1fff", "#1_ffff", "# 1ffff"):
+        assert cn001.parse_hex(bad) is None, bad
+        look = cn001.look_for("i", bad, 0.5, flashing=False)
+        assert look.background == cn001.NEUTRAL, bad
+        cn001.render(look)
+
+
 def test_each_state_has_a_mark_of_its_own_and_idle_has_none():
     marks = {code: cn001.look_for(code, GREEN, 0.5, flashing=False).mark for code in "iwbdu"}
     assert marks["i"] is None

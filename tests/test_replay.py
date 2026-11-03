@@ -183,7 +183,11 @@ def test_a_pane_payload_without_tokens_keeps_the_colour_it_had():
 
 
 def test_a_colour_that_is_not_one_is_treated_as_absent():
-    for bad in ({"color": "green"}, {"color": "#12345"}, {"color": 5}, {}, None):
+    # int(..., 16) takes a sign, a 0x and underscores, so "#-1fff" and
+    # "#0x1fff" would otherwise pass as colours with impossible channels.
+    bad_hex = ("#-1ffff", "#+1ffff", "#0x1fff", "#1_ffff", "# 1ffff")
+    for bad in ({"color": "green"}, {"color": "#12345"}, {"color": 5}, {}, None,
+                *({"color": text} for text in bad_hex)):
         state = HerdrState()
         state.apply_agents([{"pane_id": "w6:p1", "agent": "claude",
                              "agent_status": "idle", "tokens": bad}])

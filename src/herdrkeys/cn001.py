@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import time
+from string import hexdigits
 from typing import NamedTuple
 
 from .device import DeviceError
@@ -160,12 +161,11 @@ FLASH_SECONDS = 0.35
 
 
 def parse_hex(colour: str | None) -> RGB | None:
-    if not colour or len(colour) != 7 or colour[0] != "#":
+    # Digits checked one by one, because int(..., 16) also takes a sign: a
+    # channel of -1 would fail the encoder rather than fall back to NEUTRAL.
+    if not colour or len(colour) != 7 or colour[0] != "#" or not all(c in hexdigits for c in colour[1:]):
         return None
-    try:
-        return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
-    except ValueError:
-        return None
+    return int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
 
 
 def _scaled(rgb: RGB, gain: float) -> RGB:
