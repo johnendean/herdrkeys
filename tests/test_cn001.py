@@ -139,52 +139,124 @@ def test_only_key_reports_are_presses():
 # -- what each meaning looks like -------------------------------------------
 
 
-def test_a_project_colour_is_the_sidebars_hex_unsaturated():
-    # Focused done at full: exactly what herdrcolor published.
-    assert cn001.colour_for("D", "#a6e3a1", 0.5, flashing=False) == (0xA6, 0xE3, 0xA1)
+GREEN = "#a6e3a1"
+RED = "#f38ba8"
+PASTELS = {"#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#cba6f7", "#94e2d5"}
 
 
-def test_idle_is_the_same_hue_as_done_but_dark_and_still():
-    idle = cn001.colour_for("i", "#89b4fa", 0.5, flashing=False)
-    done = cn001.colour_for("d", "#89b4fa", 0.5, flashing=False)
-    assert sum(idle) * 2 < sum(done)
-    assert idle == cn001.colour_for("i", "#89b4fa", 0.0, flashing=False), "idle never moves"
+def at(pixels: bytes, x: int, y: int) -> tuple[int, int, int]:
+    """What shows at (x, y) on the key, once the panel has turned the image.
+
+    The panel turns every image a quarter clockwise, so what shows at (x, y)
+    was drawn at (y, 95 - x).
+    """
+    n = cn001.KEY_PIXELS
+    i = ((n - 1 - x) * n + y) * 4
+    return tuple(pixels[i : i + 3])
 
 
-def test_done_and_blocked_blink_to_black_together_and_nothing_else_does():
+def test_every_state_wears_its_project_colour_as_the_sidebar_shows_it():
+    for code in "iwbdu":
+        assert cn001.look_for(code, GREEN, 0.5, flashing=False).background == (0xA6, 0xE3, 0xA1), code
+
+
+def test_a_key_without_a_project_colour_is_neutral_behind_its_mark():
+    assert cn001.look_for("w", None, 0.5, flashing=False).background == cn001.NEUTRAL
+    assert cn001.look_for("w", "nonsense", 0.5, flashing=False).background == cn001.NEUTRAL
+
+
+def test_a_colour_with_an_impossible_channel_is_no_colour_at_all():
+    # Channels that are not exactly two hex digits would reach the encoder as
+    # -1 or 300, and fail the board rather than fall back.
+    for bad in ("#-1ffff", "#+1ffff", "#0x1fff", "#1_ffff", "# 1ffff"):
+        assert cn001.parse_hex(bad) is None, bad
+        look = cn001.look_for("i", bad, 0.5, flashing=False)
+        assert look.background == cn001.NEUTRAL, bad
+        cn001.render(look)
+
+
+def test_each_state_has_a_mark_of_its_own_and_idle_has_none():
+    marks = {code: cn001.look_for(code, GREEN, 0.5, flashing=False).mark for code in "iwbdu"}
+    assert marks["i"] is None
+    assert len({marks[code] for code in "wbdu"}) == 4
+
+
+def test_focus_is_a_border_not_brightness():
+    plain = cn001.look_for("w", GREEN, 0.5, flashing=False)
+    focused = cn001.look_for("W", GREEN, 0.5, flashing=False)
+    assert focused.background == plain.background
+    assert focused.mark == plain.mark
+    assert focused.focused and not plain.focused
+
+
+def test_done_and_blocked_blink_to_black_together_and_nothing_else_moves():
     off, on = 0.0, 0.5
     for code in ("b", "d"):
-        assert cn001.colour_for(code, None, off, flashing=False) == cn001.OFF
-        assert cn001.colour_for(code, None, on, flashing=False) != cn001.OFF
+        assert cn001.look_for(code, GREEN, off, flashing=False) == cn001.DARK
+        assert cn001.look_for(code, GREEN, on, flashing=False) != cn001.DARK
     for code in ("i", "w", "u"):
-        assert cn001.colour_for(code, None, off, flashing=False) == cn001.colour_for(code, None, on, flashing=False)
+        # Including the spinner: a turning one would be motion that does not
+        # mean "wants you".
+        assert cn001.look_for(code, GREEN, off, flashing=False) == cn001.look_for(code, GREEN, on, flashing=False)
 
 
-def test_a_red_projects_done_never_looks_like_blocked():
-    # herdrcolor's red is Catppuccin's pastel; blocked is a saturated red. On
-    # an LCD shown as-is, the two would otherwise be pixel-identical.
-    red_done = cn001.colour_for("d", "#f38ba8", 0.5, flashing=False)
-    blocked = cn001.colour_for("b", None, 0.5, flashing=False)
-    assert red_done != blocked
-    assert min(red_done) > 100 and min(blocked) == 0
-
-
-def test_state_colours_are_never_herdrcolors_pastels():
-    pastels = {"#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#cba6f7", "#94e2d5"}
-    for state, rgb in cn001.STATE_COLOUR.items():
-        assert "#%02x%02x%02x" % rgb not in pastels, state
+def test_marks_are_saturated_and_never_herdrcolors_pastels():
+    for state, rgb in cn001.MARK_COLOUR.items():
+        assert "#%02x%02x%02x" % rgb not in PASTELS, state
         assert min(rgb) < 60, f"{state} must be saturated, not a pastel"
 
 
-def test_focus_is_brightness_not_hue():
-    plain = cn001.colour_for("w", None, 0.5, flashing=False)
-    focused = cn001.colour_for("W", None, 0.5, flashing=False)
-    assert sum(focused) > sum(plain)
-    assert plain.index(max(plain)) == focused.index(max(focused))
+def test_a_red_projects_done_never_looks_like_blocked():
+    # Both blink and both wear the project colour; the mark and its red tell
+    # them apart.
+    done = cn001.render(cn001.look_for("d", RED, 0.5, flashing=False))
+    blocked = cn001.render(cn001.look_for("b", RED, 0.5, flashing=False))
+    red = cn001.MARK_COLOUR["b"]
+    assert any(at(blocked, x, y) == red for x in range(96) for y in range(96))
+    assert not any(at(done, x, y) == red for x in range(96) for y in range(96))
 
 
-def test_a_key_without_a_project_colour_falls_back_to_its_state_colour():
-    assert cn001.colour_for("I", None, 0.5, flashing=False) == cn001.colour_for("I", "nonsense", 0.5, flashing=False)
+def test_an_idle_key_is_its_project_colour_and_nothing_else():
+    pixels = cn001.render(cn001.look_for("i", GREEN, 0.5, flashing=False))
+    assert set(pixels) == set(pixels[:4]) and at(pixels, 48, 48) == (0xA6, 0xE3, 0xA1)
+
+
+def test_a_mark_sits_on_a_dark_badge_framed_by_the_project_colour():
+    pixels = cn001.render(cn001.look_for("d", GREEN, 0.5, flashing=False))
+    assert at(pixels, 10, 10) == (0xA6, 0xE3, 0xA1)
+    assert at(pixels, 48, 26) == cn001.BADGE, "inside the badge, clear of the tick"
+
+
+def test_a_mark_is_drawn_upright_on_the_panel():
+    # The exclamation mark is a vertical bar: above the centre is red, beside
+    # it is badge. Drawn without undoing the panel's turn, it would lie down.
+    pixels = cn001.render(cn001.look_for("b", GREEN, 0.5, flashing=False))
+    assert at(pixels, 48, 38) == cn001.MARK_COLOUR["b"]
+    assert at(pixels, 38, 48) == cn001.BADGE
+
+
+def test_the_spinner_fades_round_from_its_own_colour():
+    pixels = cn001.render(cn001.look_for("w", GREEN, 0.5, flashing=False))
+    amber = cn001.MARK_COLOUR["w"]
+    badge = set()
+    for x in range(30, 66):
+        for y in range(30, 66):
+            badge.add(at(pixels, x, y))
+    assert amber in badge
+    assert len(badge) > 4, "spokes of more than one strength"
+
+
+def test_a_focused_key_has_a_light_border_and_its_colour_inside_it():
+    pixels = cn001.render(cn001.look_for("I", GREEN, 0.5, flashing=False))
+    assert sum(at(pixels, 1, 1)) > 600
+    assert at(pixels, 12, 12) == (0xA6, 0xE3, 0xA1)
+
+
+def test_the_feature_row_keeps_its_flat_colours():
+    assert cn001.look_for("f", None, 0.5, flashing=False) == cn001.Look(cn001.FN_IDLE)
+    assert cn001.look_for("r", None, 0.5, flashing=True) == cn001.Look(cn001.FLASH)
+    assert cn001.look_for("n", None, 0.5, flashing=False) == cn001.Look(cn001.GIT_NO_PAGE)
+    assert cn001.look_for("-", None, 0.5, flashing=False) == cn001.DARK
 
 
 def test_the_board_asks_for_a_pass_only_while_something_moves():
@@ -208,7 +280,7 @@ def test_opening_wakes_the_panel_and_blanks_it():
 def test_a_frame_draws_each_slot_on_its_key():
     hid = FakeHid()
     board = cn001.CN001Device(hid, clock=Clock(0.5))
-    board.send_frame(frame({0: "D"}, {0: "#a6e3a1"}))
+    board.send_frame(frame({0: "d"}, {0: "#a6e3a1"}))
     shown = drawn(hid)
     assert shown[13] == bytes((0xA6, 0xE3, 0xA1)), "slot 0 is the top-left key"
     assert hid.commands()[-1] == b"STP", "nothing appears until committed"

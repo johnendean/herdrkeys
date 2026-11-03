@@ -57,11 +57,13 @@ def _colour_report(agent_panes: list[dict]) -> str:
     coloured = [p for p in agent_panes if herdr_state._colour_of(p) is not None]
     if not coloured:
         return (
-            f"none of {len(agent_panes)} agents; idle keys use agent state "
+            f"none of {len(agent_panes)} agents; keys show agent state alone "
             "(install herdrcolor, or run its sync)"
         )
     if len(coloured) == len(agent_panes):
-        return f"all {len(agent_panes)} agents; idle keys wear their project colour"
+        # Which keys wear it is the board's business: idle and done on the
+        # Keybow, every agent key on the CN001.
+        return f"all {len(agent_panes)} agents; their keys wear their project colour"
     return (
         f"{len(coloured)} of {len(agent_panes)} agents; the rest fall back to "
         "agent state (herdrcolor may not have synced since they appeared)"

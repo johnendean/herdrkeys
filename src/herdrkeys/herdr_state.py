@@ -22,6 +22,7 @@ dict happens to put it, which is not where Herdr shows it.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from string import hexdigits
 from typing import Any
 
 from .model import AgentPane, AgentState
@@ -65,11 +66,9 @@ def _colour_of(pane: dict[str, Any]) -> str | None:
     if not isinstance(colour, str):
         return None
     colour = colour.strip()
-    if len(colour) != 7 or not colour.startswith("#"):
-        return None
-    try:
-        int(colour[1:], 16)
-    except ValueError:
+    # Digits checked one by one: int(..., 16) would also take a sign, a 0x or
+    # an underscore, and "#-1ffff" is not a colour.
+    if len(colour) != 7 or not colour.startswith("#") or not all(c in hexdigits for c in colour[1:]):
         return None
     return colour.lower()
 
