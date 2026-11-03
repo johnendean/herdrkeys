@@ -5,9 +5,10 @@
   <key>Label</key>
   <string>dev.herdrkeys</string>
 
-  <!-- The wrapper finds its own root and uses the system python3. herdrkeys has
-       no third-party dependencies, so there is no venv to point at and nothing
-       for a Homebrew upgrade to break. -->
+  <!-- The wrapper finds its own root and a python3 of at least 3.11, looking
+       past launchd's bare PATH -- where python3 is the Command Line Tools'
+       3.9 -- to Homebrew's. herdrkeys has no third-party dependencies, so
+       there is no venv to point at. -->
   <key>ProgramArguments</key>
   <array>
     <string>__REPO__/bin/herdrkeys</string>
