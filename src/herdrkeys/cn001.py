@@ -17,7 +17,9 @@ board.
 
 from __future__ import annotations
 
+import math
 import time
+from typing import NamedTuple
 
 from .device import DeviceError
 from .macos import HidDevice, encode_jpeg, find_hid, release
@@ -107,34 +109,42 @@ def parse_input(report: bytes) -> tuple[int, bool] | None:
 
 # -- what each meaning looks like -------------------------------------------
 #
-# The same rules as device/code.py, for a different surface (ADR 0014). Motion
-# means this agent wants you: `done` and `blocked` blink to black, at the same
-# rate, and nothing else on the grid moves. Hue carries identity on `idle` and
-# `done` and state on `working` and `blocked`. Brightness carries focus.
+# The same rules as device/code.py where an LED and an LCD can share them, and
+# not where they cannot (ADRs 0014 and 0016). Motion means this agent wants
+# you: `done` and `blocked` blink to black, at the same rate, and nothing else
+# on the grid moves.
 #
-# What differs is the values. This is an LCD, not an LED, so a project colour
-# is shown as the sidebar's hex rather than saturated to survive low duty. And
-# the state colours are strong and saturated, because herdrcolor's palette *is*
-# Catppuccin's pastel red, peach and blue: a pastel always means whose, a
-# saturated colour always means what, and a red project's `done` never matches
-# `blocked`.
+# What differs is that this board can draw. On the grid, colour only ever says
+# whose: every key is its project's colour, as the sidebar shows it. What the
+# agent is doing is its mark, drawn on a dark badge in a strong colour of its
+# own -- so a pastel always means whose, a saturated colour always means what,
+# and a red project's `done` never matches `blocked`. Focus is a border, which
+# leaves brightness meaning nothing at all.
 
 RGB = tuple[int, int, int]
 
+
+class Look(NamedTuple):
+    """Everything that decides a key's pixels, and so what its image is cached by."""
+
+    background: RGB
+    mark: str | None = None  # the state code whose mark it wears
+    focused: bool = False
+
+
 OFF: RGB = (0, 0, 0)
-STATE_COLOUR: dict[str, RGB] = {
-    "i": (0, 200, 0),      # idle, when its agent has no project colour
+DARK = Look(OFF)  # a key with nothing on it is cleared, not drawn
+
+NEUTRAL: RGB = (108, 108, 108)  # behind a mark whose agent has no project colour
+BADGE: RGB = (22, 22, 22)
+BORDER: RGB = (240, 240, 240)  # focus
+
+MARK_COLOUR: dict[str, RGB] = {
     "w": (240, 140, 0),    # working       amber
-    "b": (224, 0, 0),      # blocked       red, blinks
-    "d": (0, 200, 0),      # done, when its agent has no project colour
-    "u": (32, 58, 128),    # unknown       blue
+    "b": (224, 0, 0),      # blocked       red
+    "d": (0, 200, 0),      # done          green
+    "u": (40, 100, 255),   # unknown       blue
 }
-# How bright each state sits when unfocused, as a share of its colour. Focus
-# multiplies it, so a focused key is the brightest version of what it is. An
-# idle key is dark and a done key bright, which -- with only one of them moving
-# -- is what keeps the two apart when they wear the same project colour.
-STATE_LEVEL = {"i": 0.3, "w": 0.5, "b": 0.85, "d": 0.85, "u": 0.4}
-FOCUS_GAIN = 2.5
 
 FN_IDLE: RGB = (90, 104, 90)        # function key, daemon connected
 FN_OFFLINE: RGB = (200, 0, 0)       # daemon cannot see Herdr; pulses
@@ -172,30 +182,26 @@ def _pulse(now: float) -> float:
     return 0.25 + 0.75 * (1.0 - abs(phase * 2.0 - 1.0))
 
 
-def colour_for(code: str, colour: str | None, now: float, *, flashing: bool) -> RGB:
-    """The colour a key should be showing at `now`."""
+def look_for(code: str, colour: str | None, now: float, *, flashing: bool) -> Look:
+    """What a key should be showing at `now`."""
     if code == "-":
-        return OFF
+        return DARK
     if code == "f":
-        return FLASH if flashing else FN_IDLE
+        return Look(FLASH if flashing else FN_IDLE)
     if code == "x":
-        return _scaled(FN_OFFLINE, _pulse(now))
+        return Look(_scaled(FN_OFFLINE, _pulse(now)))
     if code == "g":
-        return GIT_LOOKING
+        return Look(GIT_LOOKING)
     if code in ("r", "n"):
         if flashing:
-            return FLASH
-        return GIT_PAGE if code == "r" else GIT_NO_PAGE
+            return Look(FLASH)
+        return Look(GIT_PAGE if code == "r" else GIT_NO_PAGE)
     state = code.lower()
-    base = STATE_COLOUR.get(state)
-    if base is None:
-        return OFF  # a meaning this board does not show, such as the microphone
-    if state in ("i", "d"):
-        base = parse_hex(colour) or base
+    if state not in ("i", *MARKS):
+        return DARK  # a meaning this board does not show, such as the microphone
     if state in ("b", "d") and _blink_off(now):
-        return OFF
-    level = STATE_LEVEL[state] * (FOCUS_GAIN if code.isupper() else 1.0)
-    return _scaled(base, min(1.0, level))
+        return DARK
+    return Look(parse_hex(colour) or NEUTRAL, state if state in MARKS else None, code.isupper())
 
 
 def next_change(frame_keys: str, now: float, flash_until: float) -> float | None:
@@ -212,14 +218,136 @@ def next_change(frame_keys: str, now: float, flash_until: float) -> float | None
     return min(waits) if waits else None
 
 
-def solid(rgb: RGB) -> bytes:
-    """A key filled with one colour, as the encoder wants its pixels.
+# -- drawing a key ------------------------------------------------------------
+#
+# Marks are a few bold strokes and dots, measured in pixels from the key's
+# centre with y pointing down, and rasterised here rather than through
+# CoreGraphics: a few shapes at 96 pixels do not need a font, and this way the
+# drawing is testable anywhere (ADR 0016). Only the badge is anti-aliased; the
+# border and background are square and need nothing.
+
+BADGE_RADIUS = 27.0
+BORDER_WIDTH = 5
+KEYLINE_WIDTH = 2  # dark, inside the border, so it shows on a pale project too
+SUPERSAMPLE = 3
+
+# Each part is ("stroke", ax, ay, bx, by, half-width, strength),
+# ("dot", x, y, radius, strength) or ("arc", x, y, radius, half-width,
+# from-degrees, to-degrees, strength); strength is how much of the mark's
+# colour it has, over the badge.
+_SPOKES = 8
+MARKS: dict[str, tuple[tuple, ...]] = {
+    # working: a spinner, frozen -- its spokes fade round from the top, and it
+    # never turns.
+    "w": tuple(
+        (
+            "stroke",
+            9 * math.cos(angle), 9 * math.sin(angle),
+            19 * math.cos(angle), 19 * math.sin(angle),
+            3.0, 1.0 - 0.8 * spoke / (_SPOKES - 1),
+        )
+        for spoke in range(_SPOKES)
+        for angle in [math.radians(-90 - 360 * spoke / _SPOKES)]
+    ),
+    # blocked: an exclamation mark
+    "b": (("stroke", 0, -15, 0, 3, 4.0, 1.0), ("dot", 0, 13, 4.5, 1.0)),
+    # done: a tick
+    "d": (("stroke", -13, 0, -4, 9, 4.0, 1.0), ("stroke", -4, 9, 13, -10, 4.0, 1.0)),
+    # unknown: a question mark
+    "u": (
+        ("arc", 0, -7, 8, 3.5, -180, 90, 1.0),
+        ("stroke", 0, 1, 0, 5, 3.5, 1.0),
+        ("dot", 0, 13, 4.0, 1.0),
+    ),
+}
+
+
+def _to_segment(x: float, y: float, ax: float, ay: float, bx: float, by: float) -> float:
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(x - ax - t * dx, y - ay - t * dy)
+
+
+def _strength(parts: tuple[tuple, ...], x: float, y: float) -> float:
+    """How much of the mark's colour shows at (x, y): 0 for none of it."""
+    best = 0.0
+    for part in parts:
+        kind = part[0]
+        if kind == "stroke":
+            _, ax, ay, bx, by, half, strength = part
+            inside = _to_segment(x, y, ax, ay, bx, by) <= half
+        elif kind == "dot":
+            _, cx, cy, radius, strength = part
+            inside = math.hypot(x - cx, y - cy) <= radius
+        else:
+            _, cx, cy, radius, half, start, end, strength = part
+            angle = math.degrees(math.atan2(y - cy, x - cx))
+            inside = abs(math.hypot(x - cx, y - cy) - radius) <= half and start <= angle <= end
+        if inside:
+            best = max(best, strength)
+    return best
+
+
+def _mix(under: RGB, over: RGB, amount: float) -> RGB:
+    return tuple(round(u + (o - u) * amount) for u, o in zip(under, over))  # type: ignore[return-value]
+
+
+def _badge_pixel(look: Look, colour: RGB, x: int, y: int) -> RGB:
+    """One pixel near the badge, averaged over a few samples so its edges are smooth."""
+    parts = MARKS[look.mark] if look.mark else ()
+    total = [0, 0, 0]
+    for sy in range(SUPERSAMPLE):
+        for sx in range(SUPERSAMPLE):
+            px = x + (sx + 0.5) / SUPERSAMPLE - KEY_PIXELS / 2
+            py = y + (sy + 0.5) / SUPERSAMPLE - KEY_PIXELS / 2
+            if math.hypot(px, py) > BADGE_RADIUS:
+                sample = look.background
+            else:
+                sample = _mix(BADGE, colour, _strength(parts, px, py))
+            for channel in range(3):
+                total[channel] += sample[channel]
+    samples = SUPERSAMPLE * SUPERSAMPLE
+    return tuple(round(channel / samples) for channel in total)  # type: ignore[return-value]
+
+
+def _shown(look: Look) -> list[list[RGB]]:
+    """The key as it should appear, row by row."""
+    n = KEY_PIXELS
+    rows = [[look.background] * n for _ in range(n)]
+    if look.focused:
+        for y in range(n):
+            for x in range(n):
+                edge = min(x, y, n - 1 - x, n - 1 - y)
+                if edge < BORDER_WIDTH:
+                    rows[y][x] = BORDER
+                elif edge < BORDER_WIDTH + KEYLINE_WIDTH:
+                    rows[y][x] = BADGE
+    if look.mark:
+        colour = MARK_COLOUR[look.mark]
+        reach = math.ceil(BADGE_RADIUS) + 1
+        for y in range(n // 2 - reach, n // 2 + reach):
+            for x in range(n // 2 - reach, n // 2 + reach):
+                rows[y][x] = _badge_pixel(look, colour, x, y)
+    return rows
+
+
+def render(look: Look) -> bytes:
+    """A key's pixels, as the encoder wants them.
 
     The panel turns every image 90 degrees clockwise -- measured on the board,
-    a corner drawn top-left appears top-right -- so anything that is not a flat
-    fill has to be turned anticlockwise first. A flat fill does not care.
+    a corner drawn top-left appears top-right -- so the key is drawn turned a
+    quarter anticlockwise: what should show at (x, y) is drawn at (y, 95 - x).
     """
-    return bytes((*rgb, 0)) * (KEY_PIXELS * KEY_PIXELS)
+    n = KEY_PIXELS
+    if not look.focused and not look.mark:
+        return bytes((*look.background, 0)) * (n * n)
+    shown = _shown(look)
+    out = bytearray(n * n * 4)
+    for x in range(n):
+        for y in range(n):
+            i = ((n - 1 - x) * n + y) * 4
+            out[i : i + 3] = bytes(shown[y][x])
+    return bytes(out)
 
 
 # -- the board itself --------------------------------------------------------
@@ -232,7 +360,7 @@ class CN001Device:
     itself; this board has to be redrawn for anything on it to move, so the
     daemon calls `animate` every pass and asks `next_change` how soon it must.
 
-    Only keys whose colour changed are redrawn, and each colour is encoded once,
+    Only keys whose look changed are redrawn, and each look is encoded once,
     so a blink costs a couple of reports per key rather than a panel's worth.
     """
 
@@ -242,8 +370,8 @@ class CN001Device:
         self._frame: Frame | None = None
         self._flash_until = 0.0
         self._flash_slot: int | None = None
-        self._drawn: dict[int, RGB] = {}
-        self._jpegs: dict[RGB, bytes] = {}
+        self._drawn: dict[int, Look] = {}
+        self._jpegs: dict[Look, bytes] = {}
         self.firmware = "Soomfon CN001"
         for report in (heartbeat(), wake(), brightness_report(brightness), clear(), commit()):
             self._write(report)
@@ -254,43 +382,43 @@ class CN001Device:
         except OSError as exc:  # HidError, and the unplugged cases with it
             raise DeviceError(f"cn001: {exc}") from exc
 
-    def _jpeg(self, rgb: RGB) -> bytes:
-        jpeg = self._jpegs.get(rgb)
+    def _jpeg(self, look: Look) -> bytes:
+        jpeg = self._jpegs.get(look)
         if jpeg is None:
             try:
-                jpeg = encode_jpeg(KEY_PIXELS, KEY_PIXELS, solid(rgb))
+                jpeg = encode_jpeg(KEY_PIXELS, KEY_PIXELS, render(look))
             except OSError as exc:
                 # This board's failure, not the daemon's: as a DeviceError it
                 # drops the CN001 and leaves the Keybow running.
                 raise DeviceError(f"cn001: {exc}") from exc
-            self._jpegs[rgb] = jpeg
+            self._jpegs[look] = jpeg
         return jpeg
 
-    def _wanted(self, now: float) -> dict[int, RGB]:
-        wanted = {key: OFF for key in ALL_KEYS}
+    def _wanted(self, now: float) -> dict[int, Look]:
+        wanted = {key: DARK for key in ALL_KEYS}
         if self._frame is None:
             return wanted
         # A flash names its key; one that names none is the function key's.
         flashing_slot = FN_SLOT if self._flash_slot is None else self._flash_slot
         for slot, key in SLOT_TO_KEY.items():
             flashing = now < self._flash_until and slot == flashing_slot
-            wanted[key] = colour_for(
+            wanted[key] = look_for(
                 self._frame.keys[slot], self._frame.colours[slot], now, flashing=flashing
             )
         return wanted
 
     def _redraw(self, now: float) -> bool:
         """Draw what changed. False if nothing had."""
-        changed = {key: rgb for key, rgb in self._wanted(now).items() if self._drawn.get(key) != rgb}
+        changed = {key: look for key, look in self._wanted(now).items() if self._drawn.get(key) != look}
         if not changed:
             return False
-        for key, rgb in changed.items():
-            if rgb == OFF:
+        for key, look in changed.items():
+            if look == DARK:
                 self._write(clear(key))
             else:
-                for report in image(key, self._jpeg(rgb)):
+                for report in image(key, self._jpeg(look)):
                     self._write(report)
-            self._drawn[key] = rgb
+            self._drawn[key] = look
         self._write(commit())
         return True
 

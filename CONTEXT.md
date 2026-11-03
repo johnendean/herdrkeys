@@ -63,14 +63,23 @@ leaving the list frees its key and the agents after it move up; one appearing
 above another moves it down. No agent owns a key, nothing is remembered between
 runs, and a dark key in the grid is a free key.
 
-**Project colour** — The colour herdrcolor gives a project, worn by a key whose
-agent is `idle` or `done` — the two states where which agent it is matters more
-than what it is doing. A
+**Project colour** — The colour herdrcolor gives a project. On the Keybow it is
+worn by a key whose agent is `idle` or `done` — the two states where which agent
+it is matters more than what it is doing. On the CN001, whose keys can draw
+what an agent is doing rather than colour it, it is worn in every state: there
+colour only ever says whose. A
 **project** there is a directory's name, so two agents in one repository share a
 colour and a worktree is its own project. An agent has one only while that
 plugin is installed and has reported since the pane appeared; a key with none
 shows its agent state instead, which is what every key did before the plugin
 existed. It is not an *agent* colour: nothing colours agents.
+
+**Mark** — The shape a CN001 key draws to say what its agent is doing: a frozen
+spinner for `working`, `!` for `blocked`, a tick for `done`, `?` for `unknown`,
+and none for `idle`. It sits on a dark badge in the state's own strong colour, so
+on that board a pastel always means whose and a saturated colour always means
+what. A mark never moves; the Keybow has none, and says the same things with
+hue.
 
 **Blinking** — What a key does when its agent wants you: `done` and `blocked`,
 which are exactly the states the function key walks. Nothing else on the grid

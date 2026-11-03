@@ -155,23 +155,27 @@ stays on the Keybow, which types Right Option itself, while the CN001 cannot
 type at all. The strip to the right reports nothing when pressed, and stays
 dark.
 
-It says exactly what the Keybow says, with the same rules -- moving means this
-agent wants you, focus is brightness -- in colours an LCD can actually show:
+It says exactly what the Keybow says -- moving means this agent wants you --
+but where the Keybow can only colour a key, the CN001 can draw on it. So every
+agent key is its project's colour, as in the sidebar, and a **mark** on a dark
+badge says what the agent is doing:
 
 | State     | CN001 |
 | --------- | ----- |
-| `idle`    | its project's colour, as in the sidebar, darkened |
-| `working` | saturated amber |
-| `blocked` | saturated red, **blinking** |
-| `done`    | its project's colour, as in the sidebar, **blinking** |
-| `unknown` | blue |
+| `idle`    | its project's colour, no mark |
+| `working` | a spinner, amber, frozen |
+| `blocked` | `!`, red, **blinking** |
+| `done`    | a tick, green, **blinking** |
+| `unknown` | `?`, blue |
 
-Project colours are herdrcolor's hex exactly; the Keybow has to saturate them
-to tell them apart on its LEDs, and the LCD does not. State colours are
-deliberately *not* Catppuccin: herdrcolor's palette is Catppuccin's pastel red,
-peach and blue, and a red project's `done` would otherwise be the same blinking
-red as `blocked`. A pastel means *whose*; a saturated colour means *what*. See
-[ADR 0014](docs/adr/0014-boards-that-cannot-run-our-code-are-drawn-by-the-host.md).
+A key whose agent has no project colour is grey behind its mark; a focused key
+has a light border. Project colours are herdrcolor's hex exactly; the Keybow
+has to saturate them to tell them apart on its LEDs, and the LCD does not. Mark
+colours are deliberately strong and *not* Catppuccin, which is herdrcolor's
+palette: a pastel means *whose*; a saturated colour means *what*. The spinner
+does not turn, because on both boards only an agent that wants you moves. See
+[ADR 0014](docs/adr/0014-boards-that-cannot-run-our-code-are-drawn-by-the-host.md)
+and [ADR 0016](docs/adr/0016-the-cn001-draws-a-mark-for-state.md).
 
 **Quit Soomfon's own Stream Controller app first**: it holds the device, and
 `doctor` will say so. Nothing is installed for the CN001 either -- it is driven
@@ -299,7 +303,7 @@ Keybow 2040 ──usb_cdc data, JSON lines──┐
    code.py: palette + animation only    │
                                         │
 Soomfon CN001 ──vendor HID, JPEGs───────┤
-   cn001.py: palette + animation,       │
+   cn001.py: marks + animation,         │
    on the host                          ▼
                                    herdrkeys daemon
                                    ordering, settling, attention
