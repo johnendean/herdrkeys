@@ -125,6 +125,13 @@ finding that out means asking GitHub, which is done on a press and never in the
 background. The key is never dark, which would read as no daemon at all. It
 changes as you move between agents.
 
+On the CN001, a page on **github.com, gitlab.com, bitbucket.org or
+codeberg.org** wears that service's logo, in white on its brand colour, instead
+of the violet, so you also know where a press will take you. While a press is
+looking, the logo gets a light border. Any other host -- a self-hosted GitLab,
+GitHub Enterprise -- keeps the violet: the host name cannot prove which service
+it is, and a wrong logo is worse than none. The Keybow is unchanged. See ADR 0018.
+
 That colour is read straight out of `.git/config` rather than by running git:
 the frame is rebuilt on every pass of the loop, at least twice a second, and
 `git remote get-url` costs 14.2ms against 0.055ms for the file. A subprocess

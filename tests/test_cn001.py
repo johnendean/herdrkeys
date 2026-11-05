@@ -1,6 +1,6 @@
 import pytest
 
-from herdrkeys import cn001
+from herdrkeys import cn001, logos
 from herdrkeys.device import DeviceError
 from herdrkeys.model import (
     FN_SLOT,
@@ -268,6 +268,85 @@ def test_the_feature_row_keeps_its_flat_colours():
     assert cn001.look_for("r", None, 0.5, flashing=True) == cn001.Look(cn001.FLASH)
     assert cn001.look_for("n", None, 0.5, flashing=False) == cn001.Look(cn001.GIT_NO_PAGE)
     assert cn001.look_for("-", None, 0.5, flashing=False) == cn001.DARK
+
+
+
+# -- the forge's logo (ADR 0018) -----------------------------------------------
+
+
+WHITE = (255, 255, 255)
+
+
+def test_a_page_on_a_known_forge_wears_its_logo_on_its_brand_colour():
+    for forge, brand in cn001.FORGE_COLOUR.items():
+        look = cn001.look_for("r", None, 0.5, flashing=False, forge=forge)
+        assert look == cn001.Look(brand, logo=forge), forge
+
+
+def test_every_forge_has_its_own_colour_and_a_logo():
+    assert set(cn001.FORGE_COLOUR) == {"github", "gitlab", "bitbucket", "codeberg"}
+    assert len(set(cn001.FORGE_COLOUR.values())) == 4
+    for forge in cn001.FORGE_COLOUR:
+        assert len(logos.mask(forge)) == logos.LOGO_PIXELS ** 2, forge
+
+
+def test_an_unknown_forge_keeps_the_violet():
+    for forge in (None, "gitea", "nonsense"):
+        assert cn001.look_for("r", None, 0.5, flashing=False, forge=forge) == cn001.Look(cn001.GIT_PAGE), forge
+        assert cn001.look_for("g", None, 0.5, flashing=False, forge=forge) == cn001.Look(cn001.GIT_LOOKING), forge
+
+
+def test_looking_keeps_the_logo_and_adds_the_border_without_moving():
+    looking = cn001.look_for("g", None, 0.0, flashing=False, forge="github")
+    assert looking == cn001.Look(cn001.FORGE_COLOUR["github"], logo="github", focused=True)
+    assert cn001.look_for("g", None, 0.37, flashing=False, forge="github") == looking
+
+
+def test_no_page_is_dim_violet_whatever_the_frame_says():
+    assert cn001.look_for("n", None, 0.5, flashing=False, forge="github") == cn001.Look(cn001.GIT_NO_PAGE)
+
+
+def test_a_press_still_flashes_over_a_logo():
+    assert cn001.look_for("r", None, 0.5, flashing=True, forge="github") == cn001.Look(cn001.FLASH)
+
+
+def test_a_logo_is_white_on_its_brand_colour_and_clear_of_the_edges():
+    for forge, brand in cn001.FORGE_COLOUR.items():
+        pixels = cn001.render(cn001.Look(brand, logo=forge))
+        shown = {at(pixels, x, y) for x in range(96) for y in range(96)}
+        assert WHITE in shown, forge
+        assert brand in shown, forge
+        # The corners are the key, not the logo: it sits inside a focus border.
+        for corner in ((0, 0), (95, 0), (0, 95), (95, 95), (10, 10)):
+            assert at(pixels, *corner) == brand, (forge, corner)
+
+
+def test_a_logo_is_drawn_upright_and_centred_on_the_panel():
+    # Every pixel the mask says is logo is white, and every pixel it says is
+    # not is the brand colour. GitLab's tanuki has its ears at the top and a
+    # point at the bottom, so drawn without undoing the panel's turn it would
+    # fail this almost everywhere.
+    n = logos.LOGO_PIXELS
+    offset = (cn001.KEY_PIXELS - n) // 2
+    for forge, brand in cn001.FORGE_COLOUR.items():
+        pixels = cn001.render(cn001.Look(brand, logo=forge))
+        mask = logos.mask(forge)
+        for y in range(n):
+            for x in range(n):
+                coverage = mask[y * n + x]
+                if coverage in (0, 255):
+                    want = WHITE if coverage else brand
+                    assert at(pixels, offset + x, offset + y) == want, (forge, x, y)
+
+
+def test_the_board_draws_the_forge_from_the_frame_on_the_git_key_only():
+    hid, clock = FakeHid(), Clock(0.5)
+    board = cn001.CN001Device(hid, clock=clock)
+    keys = "i" * 10 + "--" + "mer" + "f"
+    board.send_frame(Frame(keys, forge="codeberg"))
+    wanted = board._wanted(0.5)
+    assert wanted[cn001.SLOT_TO_KEY[GIT_SLOT]].logo == "codeberg"
+    assert all(look.logo is None for key, look in wanted.items() if key != cn001.SLOT_TO_KEY[GIT_SLOT])
 
 
 # -- dictation (ADR 0017) ------------------------------------------------------

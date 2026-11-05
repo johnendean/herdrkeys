@@ -245,3 +245,17 @@ def test_colours_are_part_of_what_makes_a_frame_different():
     after = render(live, grid(("a", BLUE)), settled(*live.values()), connected=True)
     assert before.keys == after.keys
     assert before != after
+
+
+def test_the_frame_carries_the_forge_beside_the_git_key():
+    live = panes(pane("a", AgentState.IDLE, focused=True))
+    frame = render(live, grid("a"), settled(*live.values()), connected=True, git_page=True, forge="gitlab")
+    assert frame.forge == "gitlab"
+
+
+def test_a_key_with_no_page_carries_no_forge():
+    # A forge belongs to a page, and only a page has one.
+    live = panes(pane("a", AgentState.IDLE, focused=True))
+    frame = render(live, grid("a"), settled(*live.values()), connected=True, git_page=False, forge="github")
+    assert frame.keys[GIT_SLOT] == GIT_NO_PAGE
+    assert frame.forge is None

@@ -948,10 +948,34 @@ def test_git_is_never_run_while_rendering(git_rig):
     assert asked == [], "rendering must not ask git anything"
 
 
+PAGES = {
+    "/code/herdrkeys": "https://github.com/johnendean/herdrkeys",
+    "/code/elsewhere": "https://git.example.com/team/repo",
+}
+
+
+def test_the_frame_names_the_focused_agents_forge(rig, monkeypatch):
+    instance, _device, _focused, _activated = rig
+    monkeypatch.setattr(
+        daemon_module.remote_module, "page_from_config", lambda cwd, **kw: PAGES.get(cwd)
+    )
+
+    load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
+    assert instance.render(2.0).forge == "github"
+
+    # A page on a host we cannot be sure of is a page, with no forge.
+    load(instance, [git_pane("w1:p1", "/code/elsewhere", focused=True)], "w1:p1")
+    frame = instance.render(4.0)
+    assert frame.keys[GIT_SLOT] == GIT_PAGE and frame.forge is None
+
+    load(instance, [git_pane("w1:p1", "/nowhere", focused=True)], "w1:p1")
+    assert instance.render(6.0).forge is None
+
+
 def test_the_frame_says_whether_the_focused_agent_has_a_page(rig, monkeypatch):
     instance, _device, _focused, _activated = rig
     monkeypatch.setattr(
-        daemon_module.remote_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+        daemon_module.remote_module, "page_from_config", lambda cwd, **kw: PAGES.get(cwd)
     )
 
     load(instance, [git_pane("w1:p1", "/code/herdrkeys", focused=True)], "w1:p1")
@@ -964,7 +988,7 @@ def test_the_frame_says_whether_the_focused_agent_has_a_page(rig, monkeypatch):
 def test_the_frame_follows_focus_between_repositories(rig, monkeypatch):
     instance, _device, _focused, _activated = rig
     monkeypatch.setattr(
-        daemon_module.remote_module, "has_page", lambda cwd, **kw: cwd == "/code/herdrkeys"
+        daemon_module.remote_module, "page_from_config", lambda cwd, **kw: PAGES.get(cwd)
     )
     panes = [git_pane("w1:p1", "/elsewhere", focused=True), git_pane("w2:p1", "/code/herdrkeys")]
 

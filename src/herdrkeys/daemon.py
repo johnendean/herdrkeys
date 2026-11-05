@@ -607,14 +607,16 @@ class Daemon:
         # Read from `.git/config`, never `git` itself: this runs on every pass
         # of the loop, and a subprocess here would sit between every status
         # poll and the LEDs. Measured at 0.055ms against 14.2ms.
-        git_page = remote_module.has_page(focused.cwd if focused else None)
+        # The forge comes out of the same read, so it costs nothing more.
+        page = remote_module.page_from_config(focused.cwd if focused else None)
         return reducer.render(
             agent_panes,
             self.order.settled(),
             self.settler,
             connected=self.stream is not None,
-            git_page=git_page,
+            git_page=page is not None,
             git_looking=self._git_lookup is not None,
+            forge=remote_module.forge(page),
             mic=self.microphone.state,
         )
 
