@@ -3,16 +3,20 @@
 Wire protocol, newline-delimited JSON in both directions -- the same framing
 Herdr itself uses, so `screen <data-port> 115200` is a live debugger.
 
-    host -> device  {"v":1,"t":"hello"}
-                    {"v":1,"t":"frame","k":"iwB------------f"}
-                    {"v":1,"t":"flash"}          flashes the function key
-                    {"v":1,"t":"flash","k":13}   flashes that key instead
-    device -> host  {"v":1,"t":"hello","proto":1,"fw":"..."}
-                    {"v":1,"t":"key","k":3}
+    host -> device  {"v":2,"t":"hello"}
+                    {"v":2,"t":"frame","k":"iwB------------f"}
+                    {"v":2,"t":"flash"}          flashes the function key
+                    {"v":2,"t":"flash","k":13}   flashes that key instead
+                    {"v":2,"t":"hold","on":true} holds the dictation hotkey down
+                    {"v":2,"t":"return"}         types Return
+    device -> host  {"v":2,"t":"hello","proto":2,"fw":"..."}
+                    {"v":2,"t":"key","k":3}      key 3 went down
+                    {"v":2,"t":"up","k":3}       ...and came up
 
 Frames are absolute, never deltas: a dropped byte or a board reset self-heals on
 the next frame instead of leaving a stale LED lit forever. Key presses fire on
-press, not release.
+press, not release; releases are reported too, because the microphone is decided
+here and a hold is told from a tap by when the key comes up (ADR 0017).
 """
 
 from __future__ import annotations
@@ -32,10 +36,14 @@ class DeviceError(RuntimeError):
 class Device(Protocol):
     """What the daemon needs from a keypad. Implemented by real and fake alike."""
 
+    # Whether the board presses keys itself. One that cannot has the daemon
+    # type for it (ADR 0017).
+    can_type: bool
+
     def fileno(self) -> int: ...
     def send_frame(self, frame: Frame) -> None: ...
     def flash(self, slot: int | None = None) -> None: ...
-    def read_presses(self) -> list[int]: ...
+    def read_keys(self) -> list[tuple[int, bool]]: ...
     def close(self) -> None: ...
     # A board that animates itself does nothing here and never needs a pass;
     # one that the host draws (ADR 0014) is redrawn by `animate`, and says by
@@ -74,16 +82,31 @@ def encode_hello() -> bytes:
     return json.dumps({"v": PROTOCOL_VERSION, "t": "hello"}).encode() + b"\n"
 
 
-def decode_presses(messages: list[dict[str, Any]]) -> list[int]:
-    presses = []
+def encode_hold(on: bool) -> bytes:
+    return json.dumps({"v": PROTOCOL_VERSION, "t": "hold", "on": on}).encode() + b"\n"
+
+
+def encode_return() -> bytes:
+    return json.dumps({"v": PROTOCOL_VERSION, "t": "return"}).encode() + b"\n"
+
+
+_KEY_EDGES = {"key": True, "up": False}
+
+
+def decode_keys(messages: list[dict[str, Any]]) -> list[tuple[int, bool]]:
+    """(slot, went down) for every well-formed key message, in order."""
+    keys = []
     for message in messages:
-        if message.get("t") == "key" and isinstance(message.get("k"), int):
-            presses.append(message["k"])
-    return presses
+        down = _KEY_EDGES.get(message.get("t"))
+        if down is not None and isinstance(message.get("k"), int):
+            keys.append((message["k"], down))
+    return keys
 
 
 class SerialDevice:
     """A Keybow on the other end of a CDC data port."""
+
+    can_type = True
 
     def __init__(self, port: str, *, baudrate: int = 115200, handshake_timeout: float = 3.0) -> None:
         self._serial = SerialPort(port, baudrate)
@@ -143,8 +166,16 @@ class SerialDevice:
     def flash(self, slot: int | None = None) -> None:
         self._write(encode_flash(slot))
 
-    def read_presses(self) -> list[int]:
-        return decode_presses(self._read_messages())
+    def read_keys(self) -> list[tuple[int, bool]]:
+        return decode_keys(self._read_messages())
+
+    # The Keybow types for itself (ADR 0006), so it is its own typist; it types
+    # only what it is told to, because the microphone is decided here.
+    def hold(self, on: bool) -> None:
+        self._write(encode_hold(on))
+
+    def type_return(self) -> None:
+        self._write(encode_return())
 
     def close(self) -> None:
         self._serial.close()
@@ -163,9 +194,13 @@ class FakeDevice:
         self.frames: list[Frame] = []
         self.flashes = 0
         self.flashed_slots: list[int | None] = []
-        self.queued_presses: list[int] = []
+        self.queued_keys: list[tuple[int, bool]] = []
         self.closed = False
         self.firmware = "fake"
+        # A fake Keybow types for itself; by default it is a board that cannot.
+        self.can_type = False
+        self.holding = False
+        self.returns = 0
 
     @property
     def last_frame(self) -> Frame | None:
@@ -181,12 +216,18 @@ class FakeDevice:
         self.flashes += 1
         self.flashed_slots.append(slot)
 
-    def read_presses(self) -> list[int]:
-        presses, self.queued_presses = self.queued_presses, []
-        return presses
+    def read_keys(self) -> list[tuple[int, bool]]:
+        keys, self.queued_keys = self.queued_keys, []
+        return keys
 
     def close(self) -> None:
         self.closed = True
+
+    def hold(self, on: bool) -> None:
+        self.holding = on
+
+    def type_return(self) -> None:
+        self.returns += 1
 
     def animate(self, now: float) -> None:
         pass

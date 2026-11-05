@@ -20,7 +20,7 @@ GIT_SLOT = 14
 FEATURE_SLOTS = (12, 13, 14, 15)
 AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: slot n is the nth agent
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 class AgentState(str, Enum):
@@ -38,8 +38,13 @@ class AgentState(str, Enum):
 EMPTY = "-"
 FN_CONNECTED = "f"
 FN_DISCONNECTED = "x"
-MIC = "m"  # the device decides what a microphone key emits, and what it looks like
-RETURN = "e"  # ...and the same for the return key
+# The microphone key, in the three states of the one microphone (ADR 0017).
+# Every board shows the same one; which board holds it is not in the frame.
+MIC = "m"
+MIC_OPEN = "o"
+MIC_LATCHED = "l"
+MIC_CODES = {"closed": MIC, "open": MIC_OPEN, "latched": MIC_LATCHED}
+RETURN = "e"
 # The git key, in its two states: the focused agent's directory has a page, or
 # it does not. Both are lit -- dark would read as a board with no daemon behind
 # it -- and the device decides how far apart they look.
@@ -65,7 +70,7 @@ def state_code(state: AgentState, *, focused: bool) -> str:
 
 
 def feature_keys(
-    *, connected: bool, git_page: bool = False, git_looking: bool = False
+    *, connected: bool, git_page: bool = False, git_looking: bool = False, mic: str = "closed"
 ) -> list[str]:
     """An empty frame with the feature row already filled in.
 
@@ -73,7 +78,7 @@ def feature_keys(
     can never disagree about them.
     """
     keys = [EMPTY] * SLOT_COUNT
-    keys[MIC_SLOT] = MIC
+    keys[MIC_SLOT] = MIC_CODES[mic]
     keys[RETURN_SLOT] = RETURN
     if git_looking:
         keys[GIT_SLOT] = GIT_LOOKING

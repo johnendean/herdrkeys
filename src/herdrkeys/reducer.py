@@ -58,6 +58,7 @@ def render(
     connected: bool,
     git_page: bool = False,
     git_looking: bool = False,
+    mic: str = "closed",
 ) -> Frame:
     """`git_page` is passed in rather than worked out here.
 
@@ -65,7 +66,7 @@ def render(
     is the one place every interesting decision can be tested without a running
     Herdr, a keypad, or a checkout on disk.
     """
-    keys = feature_keys(connected=connected, git_page=git_page, git_looking=git_looking)
+    keys = feature_keys(connected=connected, git_page=git_page, git_looking=git_looking, mic=mic)
     colours: list[str | None] = [None] * SLOT_COUNT
     for slot, (pane_id, colour) in enumerate(on_the_grid(grid)):
         pane = agent_panes.get(pane_id)

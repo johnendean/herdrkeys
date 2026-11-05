@@ -1,6 +1,14 @@
 import json
 
-from herdrkeys.device import FakeDevice, decode_presses, encode_flash, encode_frame, encode_hello
+from herdrkeys.device import (
+    FakeDevice,
+    decode_keys,
+    encode_flash,
+    encode_frame,
+    encode_hello,
+    encode_hold,
+    encode_return,
+)
 from herdrkeys.model import MIC, MIC_SLOT, PROTOCOL_VERSION, RETURN, RETURN_SLOT, Frame
 
 
@@ -25,27 +33,36 @@ def test_control_messages():
     assert json.loads(encode_hello())["t"] == "hello"
 
 
-def test_only_well_formed_key_messages_count_as_presses():
-    assert decode_presses(
+def test_only_well_formed_key_messages_count():
+    assert decode_keys(
         [
             {"t": "key", "k": 3},
             {"t": "key"},
             {"t": "key", "k": "3"},
             {"t": "hello", "proto": 1},
+            {"t": "up", "k": 3},
+            {"t": "up", "k": None},
             {"t": "key", "k": 15},
         ]
-    ) == [3, 15]
+    ) == [(3, True), (3, False), (15, True)]
+
+
+def test_the_host_tells_the_keybow_what_to_type():
+    # The Keybow still types for itself, but only what it is told to (ADR 0017).
+    assert json.loads(encode_hold(True)) == {"v": PROTOCOL_VERSION, "t": "hold", "on": True}
+    assert json.loads(encode_hold(False))["on"] is False
+    assert json.loads(encode_return()) == {"v": PROTOCOL_VERSION, "t": "return"}
 
 
 def test_fake_device_records_what_the_daemon_would_have_shown():
     device = FakeDevice()
     device.send_frame(Frame.blank(connected=True))
     device.flash()
-    device.queued_presses = [4]
+    device.queued_keys = [(4, True), (4, False)]
     assert device.last_frame.keys.endswith("f")
     assert device.flashes == 1
-    assert device.read_presses() == [4]
-    assert device.read_presses() == [], "presses are consumed once"
+    assert device.read_keys() == [(4, True), (4, False)]
+    assert device.read_keys() == [], "keys are consumed once"
 
 
 def test_a_blank_frame_still_carries_the_feature_row():

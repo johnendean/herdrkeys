@@ -15,6 +15,8 @@ import ctypes
 import ctypes.util
 import logging
 import os
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -108,6 +110,13 @@ def _load() -> dict[str, ctypes.CDLL]:
     _declare(imageio, "CGImageDestinationCreateWithData", _vp, _vp, _vp, ctypes.c_size_t, _vp)
     _declare(imageio, "CGImageDestinationAddImage", None, _vp, _vp, _vp)
     _declare(imageio, "CGImageDestinationFinalize", ctypes.c_bool, _vp)
+
+    _declare(cg, "CGPreflightPostEventAccess", ctypes.c_bool)
+    _declare(cg, "CGRequestPostEventAccess", ctypes.c_bool)
+    _declare(cg, "CGEventCreateKeyboardEvent", _vp, _vp, ctypes.c_uint16, ctypes.c_bool)
+    _declare(cg, "CGEventSetType", None, _vp, _u32)
+    _declare(cg, "CGEventSetFlags", None, _vp, ctypes.c_uint64)
+    _declare(cg, "CGEventPost", None, _u32, _vp)
 
     _libs.update(cf=cf, iokit=iokit, cg=cg, imageio=imageio)
     return _libs
@@ -355,3 +364,80 @@ def encode_jpeg(width: int, height: int, rgbx: bytes) -> bytes:
             cg.CGImageRelease(image)
         cg.CGColorSpaceRelease(space)
         cg.CGDataProviderRelease(provider)
+
+
+# -- typing for a board that cannot (ADR 0017) --------------------------------
+#
+# Posted at the HID tap, so they arrive as if from a keyboard: Wispr Flow was
+# measured opening on a synthetic Right Option in 0.21s and closing on its
+# release. Posting needs Accessibility permission; without it macOS drops the
+# events without a word, so `can_type` is asked before anything is posted.
+
+_HID_TAP = 0  # kCGHIDEventTap
+_FLAGS_CHANGED = 12  # kCGEventFlagsChanged
+_RIGHT_OPTION = 61  # the keycode Flow's config names as push-to-talk
+_RETURN = 36
+_ALTERNATE = 0x80000  # kCGEventFlagMaskAlternate
+_DEVICE_RIGHT_ALT = 0x40  # NX_DEVICERALTKEYMASK: which Option it was
+_NON_COALESCED = 0x100  # kCGEventFlagMaskNonCoalesced
+
+
+# Run by `can_type_afresh`, in a process of its own.
+_CAN_TYPE_SCRIPT = (
+    "import ctypes, sys\n"
+    "cg = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')\n"
+    "cg.CGPreflightPostEventAccess.restype = ctypes.c_bool\n"
+    "sys.exit(0 if cg.CGPreflightPostEventAccess() else 1)\n"
+)
+
+
+class HostTypist:
+    """Presses keys from the daemon itself, for a board that cannot type."""
+
+    def can_type(self) -> bool:
+        try:
+            return bool(_load()["cg"].CGPreflightPostEventAccess())
+        except HidError:
+            return False
+
+    def can_type_afresh(self) -> bool:
+        """Whether a process started now could type.
+
+        Not the same question as `can_type`: a process that started without the
+        permission is not told when it is granted, so only a new one can say.
+        """
+        try:
+            checked = subprocess.run(
+                [sys.executable, "-I", "-c", _CAN_TYPE_SCRIPT],
+                timeout=5,
+                capture_output=True,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return checked.returncode == 0
+
+    def ask(self) -> bool:
+        """Ask macOS for the permission, which shows the user a dialog."""
+        return bool(_load()["cg"].CGRequestPostEventAccess())
+
+    def hold(self, on: bool) -> None:
+        flags = (_ALTERNATE | _DEVICE_RIGHT_ALT if on else 0) | _NON_COALESCED
+        self._post(_RIGHT_OPTION, on, event_type=_FLAGS_CHANGED, flags=flags)
+
+    def type_return(self) -> None:
+        self._post(_RETURN, True, flags=_NON_COALESCED)
+        self._post(_RETURN, False, flags=_NON_COALESCED)
+
+    def _post(self, keycode: int, down: bool, *, event_type: int | None = None, flags: int) -> None:
+        libs = _load()
+        cg, cf = libs["cg"], libs["cf"]
+        event = cg.CGEventCreateKeyboardEvent(None, keycode, down)
+        if not event:
+            raise HidError("could not create a keyboard event")
+        try:
+            if event_type is not None:
+                cg.CGEventSetType(event, event_type)
+            cg.CGEventSetFlags(event, flags)
+            cg.CGEventPost(_HID_TAP, event)
+        finally:
+            cf.CFRelease(event)

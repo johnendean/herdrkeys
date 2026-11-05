@@ -10,6 +10,7 @@ A stuck modifier is the worst thing this file can do to a machine, so the ways i
 lets go are tested one by one.
 """
 
+import json
 import sys
 import time
 import types
@@ -17,7 +18,19 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import GIT_LOOKING, GIT_NO_PAGE, GIT_PAGE, GIT_SLOT, MIC, MIC_SLOT, RETURN, RETURN_SLOT
+from herdrkeys.model import (
+    GIT_LOOKING,
+    GIT_NO_PAGE,
+    GIT_PAGE,
+    GIT_SLOT,
+    MIC,
+    MIC_LATCHED,
+    MIC_OPEN,
+    MIC_SLOT,
+    PROTOCOL_VERSION,
+    RETURN,
+    RETURN_SLOT,
+)
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 
@@ -94,111 +107,123 @@ def held(fw):
 # -- the frame character both sides have to agree on ----------------------
 
 
-def test_the_firmware_answers_to_the_character_the_host_sends(firmware):
-    # Two constants, two files, no import between them. If they drift, the key
-    # silently goes dark and stops typing.
-    assert firmware["MIC_CODE"] == MIC
-
-
 def test_it_types_the_hotkey_wispr_flow_listens_for(firmware):
     # Wispr Flow's push-to-talk here is Right Option held: its config records
     # "61": "ptt", and 61 is the macOS keycode for Right Option.
     assert firmware["DICTATION_KEY"] == "RIGHT_ALT"
 
 
-# -- holding --------------------------------------------------------------
+class FakeData:
+    """The CDC data channel: what the board says to the host."""
+
+    def __init__(self):
+        self.lines = []
+
+    def write(self, payload):
+        self.lines.append(json.loads(payload))
 
 
-def test_holding_the_key_holds_the_hotkey_down(firmware):
-    firmware["mic_pressed"](12, 0.0)
+def told(fw):
+    return [line for line in fw["data"].lines if line.get("t") in ("key", "up")]
+
+
+@pytest.fixture
+def talking(firmware):
+    firmware["data"] = FakeData()
+    return firmware
+
+
+def test_the_firmware_and_host_speak_the_same_protocol(firmware):
+    assert firmware["PROTOCOL"] == PROTOCOL_VERSION
+
+
+def test_the_firmware_answers_to_every_microphone_character_the_host_sends(firmware):
+    assert set(firmware["MIC_CODES"]) == {MIC, MIC_OPEN, MIC_LATCHED}
+
+
+# -- the host decides, the board types (ADR 0017) --------------------------
+
+
+def test_a_key_reports_both_edges(talking):
+    talking["key_went_down"](3, 0.0)
+    talking["key_came_up"](3, 0.5)
+    assert told(talking) == [{"v": PROTOCOL_VERSION, "t": "key", "k": 3}, {"v": PROTOCOL_VERSION, "t": "up", "k": 3}]
+
+
+def test_pressing_the_microphone_key_types_nothing_by_itself(talking):
+    # Whether this is a hold or a tap, and whether the microphone is already
+    # open on another board, is the host's to decide.
+    talking["key_went_down"](MIC_SLOT, 0.0)
+    talking["key_came_up"](MIC_SLOT, 0.1)
+    assert talking["keyboard"].pressed == []
+
+
+def test_pressing_the_return_key_types_nothing_by_itself(talking):
+    talking["key_went_down"](RETURN_SLOT, 0.0)
+    assert talking["keyboard"].pressed == []
+
+
+def test_it_holds_the_hotkey_while_the_host_says_to(firmware):
+    firmware["handle"]({"v": 2, "t": "hold", "on": True})
     assert held(firmware) == ["RIGHT_ALT"]
 
-    firmware["mic_released"](2.0)
-    assert held(firmware) == [], "a hold ends when your finger does"
-    assert firmware["mic_slot"] is None
+    firmware["handle"]({"v": 2, "t": "hold", "on": True})
+    assert held(firmware) == ["RIGHT_ALT"], "told twice is still held once"
 
-
-# -- latching -------------------------------------------------------------
-
-
-def test_a_tap_latches_the_microphone_open(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](0.1)  # inside LATCH_TAP_SECONDS
-    assert held(firmware) == ["RIGHT_ALT"], "still talking, with no finger on the key"
-    assert firmware["mic_latched"]
-
-
-def test_tapping_again_ends_it(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](0.1)
-    firmware["mic_pressed"](12, 5.0)
+    firmware["handle"]({"v": 2, "t": "hold", "on": False})
     assert held(firmware) == []
-    assert not firmware["mic_latched"]
-
-    firmware["mic_released"](5.05)
-    assert held(firmware) == [], "the release that ends the second tap must not re-latch"
 
 
-def test_a_hold_never_latches(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](firmware["LATCH_TAP_SECONDS"] + 0.01)
-    assert held(firmware) == [] and not firmware["mic_latched"]
+def test_it_types_return_when_the_host_says_to(firmware):
+    firmware["handle"]({"v": 2, "t": "return"})
+    assert firmware["keyboard"].pressed == ["ENTER"]
+    assert held(firmware) == [], "a tap, never a held key that would repeat"
 
 
-# -- the ways it lets go --------------------------------------------------
-
-
-def test_a_latch_does_not_outlive_its_timeout(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](0.1)
-    timeout = firmware["LATCH_TIMEOUT"]
-
-    firmware["frame_at"] = timeout / 2  # the host is alive and still says "mic"
-    firmware["paint"](timeout / 2)
-    assert held(firmware) == ["RIGHT_ALT"], "not yet"
-
-    firmware["frame_at"] = timeout + 1.0
-    firmware["paint"](timeout + 1.0)
-    assert held(firmware) == [], "nothing on the board can see whether Flow is still listening"
+# -- the ways it lets go by itself -----------------------------------------
+#
+# The host decides when the microphone closes, but a host can die. These are
+# the board's own safety net under it, and each is a test.
 
 
 def test_the_host_going_quiet_lets_go(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](0.1)
+    firmware["handle"]({"v": 2, "t": "hold", "on": True})
     firmware["paint"](firmware["HOST_TIMEOUT"] + 1.0)
     assert held(firmware) == [], "a dead daemon must not leave a modifier down"
 
 
-def test_a_frame_that_stops_naming_the_key_lets_go(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    firmware["mic_released"](0.1)
+def test_a_frame_that_stops_naming_a_microphone_lets_go(firmware):
+    firmware["handle"]({"v": 2, "t": "hold", "on": True})
     firmware["frame"] = "-" * 15 + "f"
     firmware["frame_at"] = 1.0
     firmware["paint"](1.1)
     assert held(firmware) == []
 
 
+def test_a_hold_with_no_live_frame_is_refused(firmware):
+    firmware["frame"] = None
+    firmware["handle"]({"v": 2, "t": "hold", "on": True})
+    assert held(firmware) == [], "nothing would be watching to let it go"
+
+
 # -- what it looks like ---------------------------------------------------
 
 
-def test_the_key_shows_idle_open_and_latched_apart(firmware):
-    idle = firmware["colour_for"](MIC, 0.0, 12)
-    assert idle == firmware["MIC_IDLE"]
+def test_the_key_shows_closed_open_and_latched_apart(firmware):
+    assert firmware["colour_for"](MIC, 0.0, MIC_SLOT) == firmware["MIC_IDLE"]
+    assert firmware["colour_for"](MIC_OPEN, 0.0, MIC_SLOT) == firmware["MIC_OPEN"], "open is steady"
 
-    firmware["mic_pressed"](12, 0.0)
-    assert firmware["colour_for"](MIC, 0.0, 12) == firmware["MIC_OPEN"], "held is steady"
-
-    firmware["mic_released"](0.1)
     pulse = firmware["MIC_PULSE_SECONDS"]
-    over_a_cycle = {firmware["colour_for"](MIC, pulse * f, 12) for f in (0.0, 0.25, 0.5, 0.75)}
+    over_a_cycle = {firmware["colour_for"](MIC_LATCHED, pulse * f, MIC_SLOT) for f in (0.0, 0.25, 0.5, 0.75)}
     assert len(over_a_cycle) > 1, "latched breathes, so it cannot be forgotten"
     assert firmware["MIC_OPEN"] in over_a_cycle
     assert all(rgb[0] == 0 and rgb[2] >= rgb[1] for rgb in over_a_cycle), "still cyan throughout"
 
 
-def test_only_the_key_holding_it_lights_up(firmware):
-    firmware["mic_pressed"](12, 0.0)
-    assert firmware["colour_for"](MIC, 0.0, 13) == firmware["MIC_IDLE"]
+def test_the_key_shows_a_microphone_another_board_opened(firmware):
+    # There is one microphone: this board is not holding it, and still shows it.
+    assert held(firmware) == []
+    assert firmware["colour_for"](MIC_OPEN, 0.0, MIC_SLOT) == firmware["MIC_OPEN"]
 
 
 # -- a board without the library ------------------------------------------
@@ -212,10 +237,10 @@ def test_a_board_with_no_hid_library_still_lights_up(monkeypatch):
 
     fw["frame"] = "-" * 12 + MIC + RETURN + "nf"
     fw["frame_at"] = 0.0
-    fw["mic_pressed"](12, 0.0)
-    fw["mic_released"](0.1)
+    fw["handle"]({"v": 2, "t": "hold", "on": True})
+    fw["handle"]({"v": 2, "t": "return"})
     fw["paint"](0.2)
-    assert fw["mic_slot"] is None, "nothing was ever held, so nothing is stuck"
+    assert not fw["holding"], "nothing was ever held, so nothing is stuck"
 
 
 # -- the return key -------------------------------------------------------
@@ -225,34 +250,8 @@ def test_the_firmware_answers_to_the_return_character_the_host_sends(firmware):
     assert firmware["RETURN_CODE"] == RETURN
 
 
-def test_the_return_key_types_return_and_lets_go(firmware):
-    firmware["return_pressed"](RETURN_SLOT)
-    assert firmware["keyboard"].pressed == ["ENTER"]
-    assert held(firmware) == [], "a tap, never a held key that would repeat"
-
-
-def test_return_while_the_microphone_is_held_closes_it_and_types_nothing(firmware):
-    # Flow has not inserted the text yet, and Right Option is still down: a
-    # Return now would be an Option chord sending an empty prompt.
-    firmware["mic_pressed"](MIC_SLOT, 0.0)
-    firmware["return_pressed"](RETURN_SLOT)
-    assert held(firmware) == []
-    assert "ENTER" not in firmware["keyboard"].pressed
-
-
-def test_return_while_the_microphone_is_latched_closes_it_and_types_nothing(firmware):
-    firmware["mic_pressed"](MIC_SLOT, 0.0)
-    firmware["mic_released"](0.1)
-    firmware["return_pressed"](RETURN_SLOT)
-    assert held(firmware) == [] and not firmware["mic_latched"]
-    assert "ENTER" not in firmware["keyboard"].pressed
-
-    firmware["return_released"]()
-    firmware["return_pressed"](RETURN_SLOT)
-    assert firmware["keyboard"].pressed[-1] == "ENTER", "the next press sends"
-
-
-def test_the_return_key_is_a_dimmer_steady_cyan_that_brightens_while_held(firmware):
+def test_the_return_key_is_a_dimmer_steady_cyan_that_brightens_while_held(talking):
+    firmware = talking
     now = time.monotonic()
     idle = firmware["colour_for"](RETURN, now, RETURN_SLOT)
     assert idle == firmware["RETURN_IDLE"]
@@ -261,15 +260,10 @@ def test_the_return_key_is_a_dimmer_steady_cyan_that_brightens_while_held(firmwa
     over_a_cycle = {firmware["colour_for"](RETURN, now + t, RETURN_SLOT) for t in (0.0, 0.4, 0.9, 1.6)}
     assert over_a_cycle == {idle}, "the return key does not animate"
 
-    firmware["return_pressed"](RETURN_SLOT)
+    firmware["key_went_down"](RETURN_SLOT, now)
     assert firmware["colour_for"](RETURN, now, RETURN_SLOT) == firmware["RETURN_HELD"]
-    firmware["return_released"]()
+    firmware["key_came_up"](RETURN_SLOT, now)
     assert firmware["colour_for"](RETURN, now, RETURN_SLOT) == idle
-
-
-def test_a_board_with_no_hid_library_shrugs_off_the_return_key(monkeypatch):
-    fw = load(monkeypatch, hid=False)
-    fw["return_pressed"](RETURN_SLOT)  # must not raise
 
 
 # -- the git key ---------------------------------------------------

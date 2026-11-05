@@ -83,9 +83,12 @@ after five minutes: nothing on the board can tell whether Flow is still
 listening, and a modifier held down all afternoon would turn every keystroke into
 an Option chord.
 
-The keystroke comes from the board itself rather than from the daemon, so it
-needs no Accessibility permission -- but the daemon is what tells the board which
-key it is, so a keypad showing "no host" will not dictate either.
+There is one microphone, however many boards are attached: open it on either
+board and both show it, and either board's keys close it. Whether a press is a
+hold or a tap is decided by the daemon, so a keypad showing "no host" will not
+dictate. The Keybow types Right Option itself, when the daemon tells it to, so it
+needs no permission; the CN001 cannot type, so the daemon types for it -- see
+below.
 
 The **return key** (slot 13) sits beside it and types Return, so sending what
 you just dictated is the key next to the one you dictated with. It is a dimmer
@@ -143,17 +146,27 @@ press on either means the same thing.
 ```
 [ 0      ] [ 1      ] [ 2      ] [ 3      ] [ 4      ] | strip
 [ 5      ] [ 6      ] [ 7      ] [ 8      ] [ 9      ] | (dark)
-[ -      ] [ -      ] [ -      ] [14 git  ] [15 fn   ] |
+[12 mic  ] [13 ret  ] [ -      ] [14 git  ] [15 fn   ] |
 ```
 
 Agents read left to right across the top two rows, like the agents pane
 beside it, so it shows the first ten; the eleventh and twelfth are on the
 Keybow only, though the function key pressed on either board still reaches
-them. The feature row is the bottom row, with the git and function keys at its
-right-hand end as on the Keybow. The three to their left are dark: dictation
-stays on the Keybow, which types Right Option itself, while the CN001 cannot
-type at all. The strip to the right reports nothing when pressed, and stays
-dark.
+them. The feature row is the bottom row in the Keybow's order: the microphone and
+return keys at its left, each drawing its symbol in the microphone's cyan, and
+the git and function keys at its right; the key between them is dark. The strip
+to the right reports nothing when pressed, and stays dark.
+
+The CN001 cannot type, so the daemon types for it, which needs **Accessibility
+permission**. The first time you press its microphone or return key without it,
+the daemon asks macOS, the key flashes, and the log names the binary to allow
+in System Settings > Privacy & Security > Accessibility. Until then those two
+keys draw their symbols in grey. Once you have allowed it, press either key
+again: macOS only lets a newly started process use the grant, so that press
+restarts the daemon in place, and the one after it types. Dictating on the Keybow never needs it. If the
+daemon crashes mid-dictation, Flow keeps listening until the daemon next starts
+-- the first thing it does is let go -- or until you tap the physical Right
+Option. See ADR 0017.
 
 It says exactly what the Keybow says -- moving means this agent wants you --
 but where the Keybow can only colour a key, the CN001 can draw on it. So every
@@ -355,13 +368,13 @@ vocabulary is in [`CONTEXT.md`](CONTEXT.md).
   seconds, five real status changes, no events -- so agent status is polled with
   `agent.list`, which costs 0.22ms a call. The stream is kept because it is
   instant when it does deliver. See ADR 0005.
-- The keypad types exactly one keystroke, Right Option, and only for the
-  microphone key. It is released on the key coming up, on a second tap when
-  latched, five minutes into a latch, on a frame that stops naming that key the
-  microphone, and on the host going quiet -- a
-  modifier left held down by a dead daemon would turn every later keystroke into
-  an Option chord. If `adafruit_hid` is missing from the board's `lib/`, the grid
-  still works and dictation quietly does not. See ADR 0006.
+- The keypad types two keystrokes, Right Option held and Return, and only when
+  the daemon says to: the daemon decides hold from tap, the latch and its
+  five-minute timeout, for every board at once. The Keybow still lets go by
+  itself on a frame that stops naming a microphone and on the host going quiet
+  -- a modifier left held down by a dead daemon would turn every later keystroke
+  into an Option chord. If `adafruit_hid` is missing from the board's `lib/`, the
+  grid still works and dictation quietly does not. See ADRs 0006 and 0017.
 - The daemon resends the current frame every two seconds even when nothing has
   changed. The board discards a frame older than six seconds and falls back to
   showing no host, so a dead daemon cannot leave stale agent states lit.

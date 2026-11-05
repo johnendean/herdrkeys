@@ -6,20 +6,26 @@ in the host daemon.
 
 It owns the palette and the animation, because a frame carries meaning
 (`blocked`) rather than colour -- so what red looks like, and what blinks, is
-decided here and nowhere else. The same goes for the microphone key: the host
-says which key it is, this file says that holding it means holding Right Option,
-which is what Wispr Flow listens for, and that a tap latches it open until the
-next tap. Likewise the return key: the host says which key it is, this file
-types Return.
+decided here and nowhere else.
+
+The microphone is the exception that proves it. There is one microphone however
+many boards are attached, so whether a press is a hold or a tap, and when the
+microphone closes, is decided by the host (ADR 0017). This board still types
+for itself -- holding Right Option, which is what Wispr Flow listens for, and
+typing Return -- but only what the host tells it to, and it lets go by itself
+if the host goes quiet.
 
 Wire protocol, newline-delimited JSON on the usb_cdc data channel:
 
-    in   {"v":1,"t":"hello"}
-         {"v":1,"t":"frame","k":"iwB------------f"}
-         {"v":1,"t":"frame","k":"iwB------------f","c":["#a6e3a1",null,...]}
-         {"v":1,"t":"flash"}
-    out  {"v":1,"t":"hello","proto":1,"fw":"herdrkeys-device/0.1.0"}
-         {"v":1,"t":"key","k":3}
+    in   {"v":2,"t":"hello"}
+         {"v":2,"t":"frame","k":"iwB------------f"}
+         {"v":2,"t":"frame","k":"iwB------------f","c":["#a6e3a1",null,...]}
+         {"v":2,"t":"flash"}
+         {"v":2,"t":"hold","on":true}
+         {"v":2,"t":"return"}
+    out  {"v":2,"t":"hello","proto":2,"fw":"herdrkeys-device/0.9.0"}
+         {"v":2,"t":"key","k":3}
+         {"v":2,"t":"up","k":3}
 """
 
 import json
@@ -45,8 +51,8 @@ except Exception:
     DICTATION_KEY = None
     RETURN_KEY = None
 
-PROTOCOL = 1
-FIRMWARE = "herdrkeys-device/0.8.0"
+PROTOCOL = 2
+FIRMWARE = "herdrkeys-device/0.9.0"
 
 # --- palette ---------------------------------------------------------------
 # Focus is shown by brightness, never by hue.
@@ -77,7 +83,8 @@ BASE = {
     "u": (0, 0, 35),      # unknown       dim blue
 }
 OFF = (0, 0, 0)
-MIC_CODE = "m"
+# The one microphone, closed, open and latched: the host says which (ADR 0017).
+MIC_CODES = ("m", "o", "l")
 
 # How hard a project colour is pushed towards its dominant channel before it is
 # scaled down to idle brightness. The colours arrive as sidebar pastels, and a
@@ -135,20 +142,10 @@ GIT_NONE = (7, 0, 11)
 GIT_LOOKING_CODE = "g"
 GIT_LOOKING = (110, 0, 170)
 
-# A press shorter than this latches the microphone open instead of closing it
-# with your finger; anything longer is an ordinary hold. Long enough not to fire
-# on a deliberate short phrase, short enough that a tap never feels like a wait.
-LATCH_TAP_SECONDS = 0.4
-
 # A latched microphone breathes rather than sitting still, because the whole
 # risk of latching is forgetting it is on. Faster and smoother than the blink
 # `blocked` uses, so the two never read as the same signal.
 MIC_PULSE_SECONDS = 0.9
-
-# ...and it does not stay latched forever. Nothing on the board can tell whether
-# Wispr Flow is still listening, and a modifier held down for an afternoon turns
-# every keystroke into an Option chord.
-LATCH_TIMEOUT = 300.0
 FN_OFFLINE = (70, 0, 0)     # daemon cannot see Herdr; pulses
 FN_FLASH = (140, 140, 140)  # "heard you, nothing wants your attention"
 NO_HOST = (60, 0, 60)       # no daemon; blinks, so hue alone need not carry it
@@ -204,10 +201,7 @@ last_rgb = [None] * 16
 pressed_before = [False] * 16
 flash_until = 0.0
 buffer = ""
-mic_slot = None         # the slot holding the dictation key down, if any
-mic_pressed_at = 0.0    # when it went down, to tell a tap from a hold
-mic_latched = False     # held with no finger on it, until tapped again
-mic_latched_at = 0.0    # when the latch started, so it cannot run forever
+holding = False         # whether this board is holding the dictation key down
 return_down = None      # the return key's slot while a finger is on it
 
 
@@ -266,30 +260,38 @@ def send(payload):
         pass  # host went away mid-write; the next frame will resync us
 
 
-def hold_mic(slot):
-    """Hold the dictation hotkey down while the key is held down."""
-    global mic_slot
-    if keyboard is None:
+def names_a_microphone(keys_string):
+    return any(code in MIC_CODES for code in keys_string)
+
+
+def hold_mic():
+    """Hold the dictation hotkey down, because the host said to."""
+    global holding
+    if keyboard is None or holding:
+        return
+    # Only under a frame with a microphone key in it: a frame going stale, or
+    # stopping naming one, is what lets go again if the host dies -- so a hold
+    # with no frame at all would have nothing to end it.
+    if frame is None or not names_a_microphone(frame):
         return
     try:
         keyboard.press(DICTATION_KEY)
     except Exception:
         return  # a keystroke that will not go is not worth crashing the keypad
-    mic_slot = slot
+    holding = True
 
 
 def release_mic():
     """Let go, and be willing to be called when nothing is held.
 
-    Called on release, when a frame stops calling that key the microphone, and
+    Called when the host says so, when a frame stops naming a microphone, and
     when the host goes quiet: a modifier held down by a board whose daemon has
     died would turn every later keystroke into an Option chord.
     """
-    global mic_slot, mic_latched
-    if mic_slot is None:
+    global holding
+    if not holding:
         return
-    mic_slot = None
-    mic_latched = False
+    holding = False
     if keyboard is None:
         return
     try:
@@ -298,40 +300,7 @@ def release_mic():
         pass
 
 
-def mic_pressed(slot, now):
-    """A press on the microphone key: start talking, or end a latched session."""
-    global mic_pressed_at
-    if mic_latched and mic_slot == slot:
-        release_mic()
-        return
-    hold_mic(slot)
-    mic_pressed_at = now
-
-
-def mic_released(now):
-    """A release: a tap latches the microphone open, a hold ends there."""
-    global mic_latched, mic_latched_at
-    if now - mic_pressed_at < LATCH_TAP_SECONDS:
-        mic_latched = True
-        mic_latched_at = now
-        return
-    release_mic()
-
-
-def return_pressed(slot):
-    """A press on the return key: close an open microphone, or type Return.
-
-    Never both. While the microphone is open Flow has not yet inserted what it
-    heard, so a Return sent now would send the prompt without it -- and with
-    Right Option still down it would not even be a Return. Closing the
-    microphone is the useful half; the second press, once the text is there,
-    sends it.
-    """
-    global return_down
-    return_down = slot
-    if mic_slot is not None:
-        release_mic()
-        return
+def type_return():
     if keyboard is None:
         return
     try:
@@ -341,9 +310,19 @@ def return_pressed(slot):
         pass  # a keystroke that will not go is not worth crashing the keypad
 
 
-def return_released():
+def key_went_down(slot, now):
+    """Every key reports both edges; what a key does is the host's call."""
     global return_down
-    return_down = None
+    send({"v": PROTOCOL, "t": "key", "k": slot})
+    if frame is not None and frame[slot] == RETURN_CODE:
+        return_down = slot
+
+
+def key_came_up(slot, now):
+    global return_down
+    send({"v": PROTOCOL, "t": "up", "k": slot})
+    if return_down == slot:
+        return_down = None
 
 
 def colour_for(code, now, slot):
@@ -360,11 +339,11 @@ def colour_for(code, now, slot):
         if now < flash_until and flash_slot == slot:
             return FN_FLASH
         return GIT_IDLE if code == GIT_CODE else GIT_NONE
-    if code == MIC_CODE:
-        if slot != mic_slot:
-            return MIC_IDLE
-        if not mic_latched:
-            return MIC_OPEN
+    if code == "m":
+        return MIC_IDLE
+    if code == "o":
+        return MIC_OPEN
+    if code == "l":
         return scaled(MIC_OPEN, breath(now, MIC_PULSE_SECONDS, 0.3))
     if code == RETURN_CODE:
         return RETURN_HELD if return_down == slot else RETURN_IDLE
@@ -395,9 +374,7 @@ def colour_for(code, now, slot):
 
 def paint(now):
     stale = frame is None or (now - frame_at) > HOST_TIMEOUT
-    if mic_slot is not None and (stale or frame[mic_slot] != MIC_CODE):
-        release_mic()
-    elif mic_latched and now - mic_latched_at > LATCH_TIMEOUT:
+    if holding and (stale or not names_a_microphone(frame)):
         release_mic()
     # A slow blink rather than a steady colour: whether a hue reads as intended
     # depends on the LED, but motion does not, and this must never be mistaken
@@ -437,6 +414,13 @@ def handle(message):
                 frame_colours = colours
             else:
                 frame_colours = None
+    elif kind == "hold":
+        if message.get("on") is True:
+            hold_mic()
+        else:
+            release_mic()
+    elif kind == "return":
+        type_return()
     elif kind == "flash":
         flash_until = time.monotonic() + FLASH_SECONDS
         # No slot means the function key, which is what every older host sends.
@@ -474,19 +458,9 @@ while True:
         key = KEY_ORDER[slot]
         is_pressed = keys[key].pressed
         if is_pressed and not pressed_before[key]:
-            send({"v": PROTOCOL, "t": "key", "k": slot})
-            # Every key reports its press; only these two also type. The host
-            # ignores presses on keys it holds no agent for.
-            if frame is not None and (now - frame_at) <= HOST_TIMEOUT:
-                if frame[slot] == MIC_CODE:
-                    mic_pressed(slot, now)
-                elif frame[slot] == RETURN_CODE:
-                    return_pressed(slot)
+            key_went_down(slot, now)
         elif pressed_before[key] and not is_pressed:
-            if mic_slot == slot:
-                mic_released(now)
-            if return_down == slot:
-                return_released()
+            key_came_up(slot, now)
         pressed_before[key] = is_pressed
 
     paint(now)

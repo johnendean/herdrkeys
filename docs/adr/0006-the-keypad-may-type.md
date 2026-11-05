@@ -4,7 +4,8 @@ Date: 2026-09-06
 
 ## Status
 
-Accepted
+Accepted. Amended by ADR 0017: the microphone's state, latch and timeout
+move to the host.
 
 ## Context
 

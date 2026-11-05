@@ -9,6 +9,8 @@ Accepted
 Narrows ADR 0010's "the device decides what every meaning looks like" to
 boards that run code of ours.
 
+Its dictation paragraph is replaced by ADR 0017.
+
 ## Context
 
 The Soomfon CN001 is a second board: fifteen keys behind one LCD panel, laid

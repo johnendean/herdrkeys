@@ -103,3 +103,33 @@ def test_the_cn001_is_probed_even_while_the_daemon_runs(monkeypatch, capsys):
     assert opened == [7]
     assert present and healthy
     assert "pid 4321" in line
+
+
+def test_a_daemon_that_asks_to_restart_lets_go_of_the_boards_then_starts_over(monkeypatch):
+    happened = []
+
+    class Restarting:
+        def __init__(self, config):
+            pass
+
+        def run_forever(self):
+            raise cli.Restart
+
+        def close(self):
+            happened.append("close")
+
+    def execv(path, argv):
+        happened.append(("exec", path, argv))
+        raise SystemExit(0)  # the real one never returns
+
+    monkeypatch.setattr(cli, "Daemon", Restarting)
+    monkeypatch.setattr(cli.Config, "load", staticmethod(lambda: Config()))
+    monkeypatch.setattr(cli.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(cli.os, "execv", execv)
+    monkeypatch.setattr(cli.sys, "orig_argv", ["/usr/bin/python3", "-m", "herdrkeys", "run"])
+
+    try:
+        cli.main(["run"])
+    except SystemExit:
+        pass
+    assert happened == ["close", ("exec", cli.sys.executable, ["/usr/bin/python3", "-m", "herdrkeys", "run"])]
