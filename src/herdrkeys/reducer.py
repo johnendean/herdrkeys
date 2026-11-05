@@ -58,9 +58,10 @@ def render(
     connected: bool,
     git_page: bool = False,
     git_looking: bool = False,
+    forge: str | None = None,
     mic: str = "closed",
 ) -> Frame:
-    """`git_page` is passed in rather than worked out here.
+    """`git_page` and `forge` are passed in rather than worked out here.
 
     Deciding it means touching the filesystem, and this module stays pure: it
     is the one place every interesting decision can be tested without a running
@@ -84,7 +85,9 @@ def render(
         # exactly the question the device is there to answer, and answering it
         # here would put the look of a key in two places (ADR 0010).
         colours[slot] = colour
-    return Frame("".join(keys), tuple(colours))
+    # A forge belongs to a page, so a key with no page carries none, whatever
+    # it was handed.
+    return Frame("".join(keys), tuple(colours), forge if git_page else None)
 
 
 def next_attention_target(

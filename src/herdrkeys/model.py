@@ -117,10 +117,15 @@ class Frame:
 
     Both live on one message so a frame stays absolute: there is no way for a
     key's colour and its meaning to arrive out of step.
+
+    `forge` is data for the git key in the same way: which service its page is
+    on, when that is known (ADR 0018). Only a board that can draw a logo reads
+    it; the Keybow is never sent it.
     """
 
     keys: str
     colours: tuple[str | None, ...] = (None,) * SLOT_COUNT
+    forge: str | None = None
 
     def __post_init__(self) -> None:
         if len(self.keys) != SLOT_COUNT:

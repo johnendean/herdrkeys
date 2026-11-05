@@ -371,3 +371,51 @@ def test_no_gh_or_a_slow_one_is_not_knowing(monkeypatch, error):
 
     monkeypatch.setattr(remote.subprocess, "run", fake_run)
     assert open_pull_requests(PAGE) is None
+
+
+# -- the forge (ADR 0018) ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "page, expected",
+    [
+        ("https://github.com/johnendean/herdrkeys", "github"),
+        ("https://gitlab.com/group/sub/project", "gitlab"),
+        ("https://bitbucket.org/team/repo", "bitbucket"),
+        ("https://codeberg.org/someone/thing", "codeberg"),
+        # Hosts are not case-sensitive; a remote typed in capitals is the same host.
+        ("https://GitHub.com/johnendean/herdrkeys", "github"),
+    ],
+)
+def test_a_forges_own_public_host_is_that_forge(page, expected):
+    assert remote.forge(page) == expected
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        # Probably GitLab, and probably GitHub Enterprise -- but a wrong logo
+        # is worse than none, so neither is guessed at.
+        "https://gitlab.mycorp.com/team/repo",
+        "https://github.mycorp.com/team/repo",
+        "https://git.example.com/team/repo",
+        # Look-alikes that merely contain a forge's name.
+        "https://notgithub.com/a/b",
+        "https://github.com.example.net/a/b",
+        "https://gist.github.com/a/b",
+    ],
+)
+def test_any_other_host_has_a_page_but_no_known_forge(page):
+    assert remote.forge(page) is None
+
+
+def test_no_page_has_no_forge():
+    assert remote.forge(None) is None
+
+
+def test_the_page_is_read_straight_out_of_the_config(tmp_path):
+    make_repo(tmp_path, PLAIN)
+    page = remote.page_from_config(str(tmp_path))
+    assert page == "https://github.com/johnendean/herdrkeys"
+    assert remote.forge(page) == "github"
+    assert remote.page_from_config(None) is None

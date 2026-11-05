@@ -24,6 +24,7 @@ from typing import NamedTuple
 
 from .device import DeviceError
 from .macos import HidDevice, encode_jpeg, find_hid, release
+from . import logos
 from .model import FN_SLOT, GIT_SLOT, MIC_SLOT, RETURN_SLOT, Frame
 
 VENDOR_ID = 0x1500
@@ -134,6 +135,7 @@ class Look(NamedTuple):
     mark: str | None = None  # the state code whose mark it wears
     focused: bool = False
     muted: bool = False  # its mark greyed: a key this board cannot act on
+    logo: str | None = None  # the forge whose logo it wears: the git key only
 
 
 OFF: RGB = (0, 0, 0)
@@ -156,6 +158,17 @@ FLASH: RGB = (230, 230, 230)        # "heard you"
 GIT_PAGE: RGB = (108, 0, 168)       # the focused agent's directory has a page
 GIT_NO_PAGE: RGB = (20, 0, 32)      # ...and this one does not
 GIT_LOOKING: RGB = (170, 0, 255)    # a press is finding out where to go
+
+# A page on a known forge wears that forge's logo in white on its brand colour
+# instead of the violet (ADR 0018). The feature row was never bound by "a
+# saturated colour means what": GitLab's orange is not `working` here.
+FORGE_COLOUR: dict[str, RGB] = {
+    "github": (0x18, 0x17, 0x17),
+    "gitlab": (0xFC, 0x6D, 0x26),
+    "bitbucket": (0x00, 0x52, 0xCC),
+    "codeberg": (0x21, 0x85, 0xD0),
+}
+LOGO_COLOUR: RGB = (255, 255, 255)
 
 # The microphone and return keys (ADR 0017), in the Keybow's cyan: the one hue
 # no agent state uses. Each draws its symbol, and the key behind it says how the
@@ -197,13 +210,22 @@ def _pulse(now: float) -> float:
 
 
 def look_for(
-    code: str, colour: str | None, now: float, *, flashing: bool, can_type: bool = True
+    code: str,
+    colour: str | None,
+    now: float,
+    *,
+    flashing: bool,
+    can_type: bool = True,
+    forge: str | None = None,
 ) -> Look:
     """What a key should be showing at `now`.
 
     `can_type` is whether a press on this board can type. Without it the
     microphone and return keys grey their symbols -- but still show the one
     microphone, which another board may have opened.
+
+    `forge` is the git key's, and only matters there. One this board has no
+    logo for is no forge at all.
     """
     if code == "-":
         return DARK
@@ -216,12 +238,17 @@ def look_for(
         return Look(FLASH if flashing else FN_IDLE)
     if code == "x":
         return Look(_scaled(FN_OFFLINE, _pulse(now)))
+    known = forge if forge in FORGE_COLOUR and forge in logos.names() else None
     if code == "g":
-        return Look(GIT_LOOKING)
+        # Looking is the focus border, held steady: motion means an agent
+        # wants you (ADR 0012), and this is the board acknowledging you.
+        return Look(FORGE_COLOUR[known], logo=known, focused=True) if known else Look(GIT_LOOKING)
     if code in ("r", "n"):
         if flashing:
             return Look(FLASH)
-        return Look(GIT_PAGE if code == "r" else GIT_NO_PAGE)
+        if code == "n":
+            return Look(GIT_NO_PAGE)
+        return Look(FORGE_COLOUR[known], logo=known) if known else Look(GIT_PAGE)
     state = code.lower()
     if state not in ("i", *MARKS):
         return DARK  # a meaning this board does not show
@@ -381,6 +408,16 @@ def _shown(look: Look) -> list[list[RGB]]:
         for y in range(n // 2 - reach, n // 2 + reach):
             for x in range(n // 2 - reach, n // 2 + reach):
                 rows[y][x] = _badge_pixel(look, colour, x, y)
+    if look.logo:
+        size = logos.LOGO_PIXELS
+        offset = (n - size) // 2
+        mask = logos.mask(look.logo)
+        for y in range(size):
+            for x in range(size):
+                coverage = mask[y * size + x]
+                if coverage:
+                    under = rows[offset + y][offset + x]
+                    rows[offset + y][offset + x] = _mix(under, LOGO_COLOUR, coverage / 255)
     return rows
 
 
@@ -392,7 +429,7 @@ def render(look: Look) -> bytes:
     quarter anticlockwise: what should show at (x, y) is drawn at (y, 95 - x).
     """
     n = KEY_PIXELS
-    if not look.focused and not look.mark:
+    if not look.focused and not look.mark and not look.logo:
         return bytes((*look.background, 0)) * (n * n)
     shown = _shown(look)
     out = bytearray(n * n * 4)
@@ -468,6 +505,7 @@ class CN001Device:
                 now,
                 flashing=flashing,
                 can_type=can_type,
+                forge=self._frame.forge if slot == GIT_SLOT else None,
             )
         return wanted
 

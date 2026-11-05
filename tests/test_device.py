@@ -87,3 +87,10 @@ def test_colours_ride_on_the_frame_itself():
     assert payload["c"][0] == "#a6e3a1"
     assert payload["c"][1] is None
     assert len(payload["c"]) == 16, "one entry per key, so a frame stays absolute"
+
+
+def test_the_keybow_never_hears_about_the_forge():
+    # Only the CN001 can draw a logo (ADR 0018), so the Keybow is sent the
+    # very bytes it was sent before forges existed.
+    plain = Frame("-" * 12 + "mer" + "f")
+    assert encode_frame(Frame(plain.keys, forge="github")) == encode_frame(plain)

@@ -185,16 +185,42 @@ def remote_from_config(cwd: str | None, *, remote: str = "origin") -> str | None
     return _remote_in(text, remote)
 
 
-def has_page(cwd: str | None, *, remote: str = "origin") -> bool:
-    """Whether this directory looks like it has a page, cheaply enough to ask
-    on every frame.
+def page_from_config(cwd: str | None, *, remote: str = "origin") -> str | None:
+    """This directory's page, cheaply enough to ask on every frame.
 
     Answers from the config file alone. It can therefore say no where a press
     would find something, and the key under-promises rather than over-promises:
     a dark key that turns out to work is a much smaller betrayal than a lit key
     that does nothing.
     """
-    return web_url(remote_from_config(cwd, remote=remote)) is not None
+    return web_url(remote_from_config(cwd, remote=remote))
+
+
+def has_page(cwd: str | None, *, remote: str = "origin") -> bool:
+    """Whether this directory looks like it has a page. See `page_from_config`."""
+    return page_from_config(cwd, remote=remote) is not None
+
+
+# Each forge's own public host, and nothing else. `gitlab.mycorp.com` is
+# probably GitLab and `github.mycorp.com` probably GitHub Enterprise, but a key
+# wearing the wrong logo is worse than one wearing none (ADR 0018).
+FORGE_HOSTS = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "bitbucket.org": "bitbucket",
+    "codeberg.org": "codeberg",
+}
+
+
+def forge(page: str | None) -> str | None:
+    """The forge a page is on, or None when there is no page or its host is not
+    a forge's own public one."""
+    if not page:
+        return None
+    match = _SCHEME_URL.match(page)
+    if not match:
+        return None
+    return FORGE_HOSTS.get(match.group("host").lower())
 
 
 def remote_url(cwd: str, *, remote: str = "origin", timeout: float = 5.0) -> str | None:

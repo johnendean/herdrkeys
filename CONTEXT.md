@@ -107,13 +107,20 @@ agent's repository has to offer: its **pull request** if it has one; otherwise
 the repository's open pull requests, if there are any; otherwise its **page**.
 It follows focus rather than holding a repository of its own, so what it opens
 changes as you move around. Its colour says only whether there is a page --
-which of the three a press will reach is found out by pressing. Never dark: "no
-page here" is a state it reports, not an absence. Formerly the repo key.
+which of the three a press will reach is found out by pressing. On the CN001 a
+page whose **forge** is known wears that forge's logo instead, so the key also
+says where a press will go. Never dark: "no page here" is a state it reports,
+not an absence. Formerly the repo key.
 
 **Page** — The web address a repository's remote names. A remote that names no
 host — a local clone, a path — has no page, and neither does a directory
 outside a repository. A press that finds none is answered with a flash rather
 than treated as a failure.
+
+**Forge** — The service a **page** is on: GitHub, GitLab, Bitbucket or
+Codeberg. Known only when the page's host is that service's own public host
+exactly; a self-hosted or unrecognised host has a page but no known forge, and
+is treated as no forge rather than guessed at. Only a page has a forge.
 
 **Pull request** — An open pull request whose head is the branch the agent's
 directory has checked out, in that same repository: a fork's branch of the same
