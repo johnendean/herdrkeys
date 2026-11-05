@@ -10,7 +10,7 @@ import sys
 import os
 import subprocess
 
-from . import activate, cn001, discovery, herdr, herdr_state, macos, provision
+from . import activate, cn001, discovery, herdr, herdr_state, macos, provision, usage
 from .config import Config
 from .paths import resolve_config
 from .daemon import PROCESS_MARKER, Daemon, Restart
@@ -99,6 +99,20 @@ def _cn001_report(daemon_pid: int | None) -> tuple[bool, bool, str]:
     return True, True, f"{where}  ok"
 
 
+def _usage_report(config: Config) -> str:
+    """What the CN001's strip would show (ADR 0019). Never a failure: the boards work without it."""
+    if not config.usage:
+        return "off in config"
+    try:
+        now = usage.current()
+    except usage.UsageError as exc:
+        return f"UNKNOWN  ({exc})"
+    parts = []
+    for name, limit in (("session", now.session), ("weekly", now.weekly)):
+        parts.append(f"{name} {limit.percent:g}%" if limit else f"{name} none")
+    return "ok  (" + ", ".join(parts) + ")"
+
+
 def doctor(config: Config) -> int:
     """Report on everything the daemon depends on, without changing anything."""
     ok = True
@@ -163,6 +177,8 @@ def doctor(config: Config) -> int:
                 print(f"NO HANDSHAKE  ({exc})")
 
     print(f"cn001            {cn001_line}")
+    if cn001_present:
+        print(f"usage            {_usage_report(config)}")
     if cn001_present:
         ok = ok and cn001_ok
     elif not ports:

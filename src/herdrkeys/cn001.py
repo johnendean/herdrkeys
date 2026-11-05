@@ -431,13 +431,179 @@ def render(look: Look) -> bytes:
     n = KEY_PIXELS
     if not look.focused and not look.mark and not look.logo:
         return bytes((*look.background, 0)) * (n * n)
-    shown = _shown(look)
+    return _turned(_shown(look))
+
+
+def _turned(shown: list[list[RGB]]) -> bytes:
+    """`shown` as the encoder wants it: a quarter anticlockwise, for the panel to turn back."""
+    n = KEY_PIXELS
     out = bytearray(n * n * 4)
     for x in range(n):
         for y in range(n):
             i = ((n - 1 - x) * n + y) * 4
             out[i : i + 3] = bytes(shown[y][x])
     return bytes(out)
+
+
+# -- the strip -------------------------------------------------------------
+#
+# Three displays right of the keys, top to bottom: the 5-hour session, the
+# weekly limit, and how long until you can work again (ADR 0019). They take a
+# key's 96 pixels and its quarter turn, but crop a few pixels at the edges, so
+# nothing is drawn within STRIP_MARGIN of one. A saturated colour means what
+# here too: a gauge is light grey, amber when nearly spent, red once it is, and
+# the countdown is red while you are stopped. Nothing on the strip moves.
+
+STRIP_KEYS = (16, 17, 18)  # top, middle, bottom
+STRIP_MARGIN = 8
+
+GAUGE: RGB = (210, 210, 210)
+LABEL: RGB = (150, 150, 150)
+TRACK: RGB = (44, 44, 44)
+STALE_TRACK: RGB = (28, 28, 28)
+STALE_LABEL: RGB = (70, 70, 70)
+AMBER_FROM = 80  # percent
+
+GAUGE_LEFT, GAUGE_RIGHT, GAUGE_TOP, GAUGE_BOTTOM = 12, 84, 32, 86  # [left, right) x [top, bottom)
+
+
+class Panel(NamedTuple):
+    """Everything that decides one strip display's pixels."""
+
+    label: str
+    text: str
+    colour: RGB
+    fill: float | None = None  # a gauge's share filled, 0-1; None for no gauge
+    stale: bool = False
+
+
+def _gauge(label: str, limit, stale: bool) -> Panel:
+    percent = limit.percent if limit else 0.0
+    if stale:
+        colour = MUTED
+    elif percent >= 100:
+        colour = MARK_COLOUR["b"]
+    elif percent >= AMBER_FROM:
+        colour = MARK_COLOUR["w"]
+    else:
+        colour = GAUGE
+    # Rounded down: 99.6% is not yet spent, and must not read as if it were.
+    shown = max(0, min(100, math.floor(percent)))
+    return Panel(label, f"{shown}%", colour, max(0.0, min(1.0, percent / 100)), stale)
+
+
+def countdown(seconds: float) -> str:
+    """A wait, to the minute, rounded up: '42M', '3:07', '2D5H'."""
+    minutes = max(0, math.ceil(seconds / 60))
+    if minutes < 60:
+        return f"{minutes}M"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}:{minutes:02d}"
+    days, hours = divmod(hours, 24)
+    return f"{days}D{hours}H"
+
+
+def strip_panels(reading, wall: float, *, stale: bool) -> dict[int, Panel | None]:
+    """What each strip display shows at `wall`; None while usage has never been known."""
+    if reading is None:
+        return dict.fromkeys(STRIP_KEYS)
+    now = reading.at(wall)
+    free = reading.free_at(wall)
+    if stale:
+        colour = MUTED
+    elif reading.limited(wall):
+        colour = MARK_COLOUR["b"]
+    else:
+        colour = GAUGE
+    return {
+        STRIP_KEYS[0]: _gauge("5H", now.session, stale),
+        STRIP_KEYS[1]: _gauge("WEEK", now.weekly, stale),
+        STRIP_KEYS[2]: Panel("RESET", "-" if free is None else countdown(free - wall), colour, None, stale),
+    }
+
+
+# A 5x7 font: just the characters the strip says.
+FONT: dict[str, tuple[str, ...]] = {
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
+    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
+    "%": ("11001", "11010", "00010", "00100", "01000", "01011", "10011"),
+    ":": ("0", "1", "1", "0", "1", "1", "0"),
+    "-": ("000", "000", "000", "111", "000", "000", "000"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+}
+FONT_HEIGHT = 7
+
+
+def text_width(text: str, scale: int) -> int:
+    widths = [len(FONT[c][0]) * scale for c in text]
+    return sum(widths) + scale * (len(widths) - 1)
+
+
+def _text_pixels(text: str, scale: int, left: int, top: int):
+    """Every pixel `text` covers, drawn at `scale` from (left, top)."""
+    x = left
+    for char in text:
+        glyph = FONT[char]
+        for row, line in enumerate(glyph):
+            for column, bit in enumerate(line):
+                if bit == "1":
+                    for dy in range(scale):
+                        for dx in range(scale):
+                            yield x + column * scale + dx, top + row * scale + dy
+        x += (len(glyph[0]) + 1) * scale
+
+
+def _centred(text: str, scale: int, top: int) -> tuple[int, int]:
+    return (KEY_PIXELS - text_width(text, scale)) // 2, top
+
+
+def _shown_panel(panel: Panel) -> list[list[RGB]]:
+    n = KEY_PIXELS
+    rows = [[OFF] * n for _ in range(n)]
+    label_colour = STALE_LABEL if panel.stale else LABEL
+    for x, y in _text_pixels(panel.label, 2, *_centred(panel.label, 2, STRIP_MARGIN + 2)):
+        rows[y][x] = label_colour
+    middle = (GAUGE_TOP + GAUGE_BOTTOM) // 2
+    if panel.fill is None:
+        widest = n - 2 * STRIP_MARGIN
+        scale = next((s for s in (4, 3) if text_width(panel.text, s) <= widest), 2)
+        top = middle - FONT_HEIGHT * scale // 2
+        for x, y in _text_pixels(panel.text, scale, *_centred(panel.text, scale, top)):
+            rows[y][x] = panel.colour
+        return rows
+    filled_from = GAUGE_BOTTOM - round(panel.fill * (GAUGE_BOTTOM - GAUGE_TOP))
+    track = STALE_TRACK if panel.stale else TRACK
+    for y in range(GAUGE_TOP, GAUGE_BOTTOM):
+        for x in range(GAUGE_LEFT, GAUGE_RIGHT):
+            rows[y][x] = panel.colour if y >= filled_from else track
+    # The number reads over the gauge: dark where the fill is, light above it.
+    top = middle - FONT_HEIGHT * 3 // 2
+    for x, y in _text_pixels(panel.text, 3, *_centred(panel.text, 3, top)):
+        on_fill = y >= filled_from and GAUGE_LEFT <= x < GAUGE_RIGHT
+        rows[y][x] = BADGE if on_fill else panel.colour
+    return rows
+
+
+def render_panel(panel: Panel) -> bytes:
+    """A strip display's pixels, turned for the panel like a key's."""
+    return _turned(_shown_panel(panel))
 
 
 # -- the board itself --------------------------------------------------------
@@ -456,9 +622,15 @@ class CN001Device:
 
     can_type = False  # the manufacturer's firmware types nothing we ask it to
 
-    def __init__(self, hid, *, brightness: int = 80, clock=time.monotonic, can_type=lambda: True) -> None:
+    def __init__(
+        self, hid, *, brightness: int = 80, clock=time.monotonic, wall=time.time, can_type=lambda: True
+    ) -> None:
         self._hid = hid
         self._clock = clock
+        self._wall = wall  # the strip counts down to moments on the calendar, not the loop's clock
+        self._usage = None
+        self._usage_stale = False
+        self._panels: dict[Panel, bytes] = {}
         # Asked on every draw rather than once, so the permission switched off
         # or back on in System Settings shows on the keys straight away. (A
         # first grant needs a restart, which the daemon does itself.)
@@ -490,8 +662,29 @@ class CN001Device:
             self._jpegs[look] = jpeg
         return jpeg
 
-    def _wanted(self, now: float) -> dict[int, Look]:
-        wanted = {key: DARK for key in ALL_KEYS}
+    def _panel_jpeg(self, panel: Panel) -> bytes:
+        jpeg = self._panels.get(panel)
+        if jpeg is None:
+            # The countdown makes a new panel every minute, so unlike the
+            # keys' looks these are not a small set: keep only recent ones.
+            if len(self._panels) >= 64:
+                self._panels.clear()
+            try:
+                jpeg = encode_jpeg(KEY_PIXELS, KEY_PIXELS, render_panel(panel))
+            except OSError as exc:
+                raise DeviceError(f"cn001: {exc}") from exc
+            self._panels[panel] = jpeg
+        return jpeg
+
+    def show_usage(self, reading, *, stale: bool) -> None:
+        """What the strip should say from now on; drawn on the next redraw (ADR 0019)."""
+        self._usage = reading
+        self._usage_stale = stale
+
+    def _wanted(self, now: float) -> dict[int, Look | Panel]:
+        wanted: dict[int, Look | Panel] = {key: DARK for key in ALL_KEYS}
+        for key, panel in strip_panels(self._usage, self._wall(), stale=self._usage_stale).items():
+            wanted[key] = DARK if panel is None else panel
         if self._frame is None:
             return wanted
         # A flash names its key; one that names none is the function key's.
@@ -518,7 +711,8 @@ class CN001Device:
             if look == DARK:
                 self._write(clear(key))
             else:
-                for report in image(key, self._jpeg(look)):
+                jpeg = self._panel_jpeg(look) if isinstance(look, Panel) else self._jpeg(look)
+                for report in image(key, jpeg):
                     self._write(report)
             self._drawn[key] = look
         self._write(commit())

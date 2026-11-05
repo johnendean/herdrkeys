@@ -33,3 +33,19 @@ def no_real_keystrokes(monkeypatch):
         raise AssertionError("a test tried to post a real keystroke")
 
     monkeypatch.setattr(macos.HostTypist, "_post", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_real_usage(monkeypatch):
+    """And for the Keychain and the network: a test must never ask Anthropic.
+
+    The daemon polls usage while a board with a strip is attached (ADR 0019),
+    which reads Claude Code's real credential -- possibly raising macOS's
+    Keychain dialog -- and makes a real request.
+    """
+    from herdrkeys import usage
+
+    def refuse():
+        raise AssertionError("a test tried to ask Anthropic for usage")
+
+    monkeypatch.setattr(usage, "current", refuse)

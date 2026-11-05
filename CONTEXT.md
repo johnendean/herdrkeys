@@ -149,6 +149,20 @@ has not landed yet, and Return then would send the prompt without it.
 microphone key pulses while it is latched, and ends on a second tap, on a five-minute timeout, or on anything that
 would otherwise release the key.
 
+**Strip** — The three small displays to the right of the CN001's keys. They
+report nothing when pressed, so they hold no slot and are not part of the
+frame; only the CN001 has one. Not "the screen": it is three displays, each
+drawn on its own.
+
+**Usage** — How much of your Claude plan's rate limits you have used: the
+share of each limit's window spent, and when that window resets. It belongs to
+the account, not to any agent, so it is the same whichever agent is focused
+and however many are running. It is not a token count and not how full an
+agent's context is; Herdr's pane `tokens` are colours and unrelated. Shown on
+the **strip**, which is dark until usage has been known once. After that the
+strip always shows the last usage known, and says when that is out of date
+rather than going dark: an old reading is still worth reading.
+
 **Board** — One attached keypad: a Keybow 2040 or a Soomfon CN001. Every board
 shows the same frame and any board's press means the same thing, so two boards
 are two views of one agent list, not two lists. A board says what each meaning

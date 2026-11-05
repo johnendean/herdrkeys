@@ -151,9 +151,9 @@ the daemon finds it; with both boards attached, both show the same agents and a
 press on either means the same thing.
 
 ```
-[ 0      ] [ 1      ] [ 2      ] [ 3      ] [ 4      ] | strip
-[ 5      ] [ 6      ] [ 7      ] [ 8      ] [ 9      ] | (dark)
-[12 mic  ] [13 ret  ] [ -      ] [14 git  ] [15 fn   ] |
+[ 0      ] [ 1      ] [ 2      ] [ 3      ] [ 4      ] | 5h session
+[ 5      ] [ 6      ] [ 7      ] [ 8      ] [ 9      ] | week
+[12 mic  ] [13 ret  ] [ -      ] [14 git  ] [15 fn   ] | reset in
 ```
 
 Agents read left to right across the top two rows, like the agents pane
@@ -162,7 +162,18 @@ Keybow only, though the function key pressed on either board still reaches
 them. The feature row is the bottom row in the Keybow's order: the microphone and
 return keys at its left, each drawing its symbol in the microphone's cyan, and
 the git and function keys at its right; the key between them is dark. The strip
-to the right reports nothing when pressed, and stays dark.
+to the right reports nothing when pressed; it shows your Claude plan's usage.
+
+**The strip** shows how much of your Claude plan's rate limits you have used:
+the 5-hour session at the top and the weekly limit in the middle, each as a
+gauge with its percentage, and at the bottom how long until you can work again.
+A gauge turns amber at 80% and red once the limit is spent, and the countdown
+turns red with it. The daemon asks Anthropic once a minute while a CN001 is
+attached, using Claude Code's own sign-in from the Keychain, which it reads and
+never changes. The first time, macOS may ask whether `security` may read
+`Claude Code-credentials`; allow it. The strip stays dark until usage is first
+known, and goes grey when its reading is more than five minutes old. `doctor`
+says why, and `usage = false` in `config.toml` turns it off. See ADR 0019.
 
 The CN001 cannot type, so the daemon types for it, which needs **Accessibility
 permission**. The first time you press its microphone or return key without it,
@@ -308,6 +319,7 @@ terminal_app      = ""      # override the auto-detected .app bundle
 serial_port       = ""      # override the auto-discovered data port
 socket_path       = ""      # override the Herdr socket
 cn001_brightness  = 80      # the CN001's panel, 0-100
+usage             = true    # the CN001 strip shows Claude plan usage (ADR 0019)
 ```
 
 Keys are numbered row-major with key 0 bottom-left, following PMK's own
