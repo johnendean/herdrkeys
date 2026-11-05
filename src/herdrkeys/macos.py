@@ -15,6 +15,8 @@ import ctypes
 import ctypes.util
 import logging
 import os
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -380,6 +382,15 @@ _DEVICE_RIGHT_ALT = 0x40  # NX_DEVICERALTKEYMASK: which Option it was
 _NON_COALESCED = 0x100  # kCGEventFlagMaskNonCoalesced
 
 
+# Run by `can_type_afresh`, in a process of its own.
+_CAN_TYPE_SCRIPT = (
+    "import ctypes, sys\n"
+    "cg = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')\n"
+    "cg.CGPreflightPostEventAccess.restype = ctypes.c_bool\n"
+    "sys.exit(0 if cg.CGPreflightPostEventAccess() else 1)\n"
+)
+
+
 class HostTypist:
     """Presses keys from the daemon itself, for a board that cannot type."""
 
@@ -388,6 +399,22 @@ class HostTypist:
             return bool(_load()["cg"].CGPreflightPostEventAccess())
         except HidError:
             return False
+
+    def can_type_afresh(self) -> bool:
+        """Whether a process started now could type.
+
+        Not the same question as `can_type`: a process that started without the
+        permission is not told when it is granted, so only a new one can say.
+        """
+        try:
+            checked = subprocess.run(
+                [sys.executable, "-I", "-c", _CAN_TYPE_SCRIPT],
+                timeout=5,
+                capture_output=True,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return checked.returncode == 0
 
     def ask(self) -> bool:
         """Ask macOS for the permission, which shows the user a dialog."""

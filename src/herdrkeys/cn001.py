@@ -422,8 +422,9 @@ class CN001Device:
     def __init__(self, hid, *, brightness: int = 80, clock=time.monotonic, can_type=lambda: True) -> None:
         self._hid = hid
         self._clock = clock
-        # Asked on every draw rather than once, so granting the permission
-        # shows on the keys without restarting anything.
+        # Asked on every draw rather than once, so the permission switched off
+        # or back on in System Settings shows on the keys straight away. (A
+        # first grant needs a restart, which the daemon does itself.)
         self._can_type = can_type
         self._frame: Frame | None = None
         self._flash_until = 0.0

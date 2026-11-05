@@ -30,6 +30,9 @@ class FakeHostTypist:
 
     def __init__(self):
         self.allowed = True
+        # What a process started now would be told. macOS tells a running
+        # process about a grant only if it had one when it started.
+        self.allowed_afresh = False
         self.holding = False
         self.holds = []  # every hold(on) it was told, in order
         self.returns = 0
@@ -37,6 +40,9 @@ class FakeHostTypist:
 
     def can_type(self) -> bool:
         return self.allowed
+
+    def can_type_afresh(self) -> bool:
+        return self.allowed_afresh
 
     def ask(self) -> bool:
         self.asked += 1
@@ -1107,6 +1113,15 @@ def test_a_starting_daemon_lets_go_of_what_a_crashed_one_held():
     assert host.holds == [False]
 
 
+def test_a_daemon_starting_without_the_permission_posts_nothing():
+    # Posting without it makes macOS raise its own dialog, asking before anyone
+    # has tried to dictate -- and nothing it posts would land anyway.
+    host = FakeHostTypist()
+    host.allowed = False
+    Daemon(Config(), device_factory=FakeDevice, host_typist=host)
+    assert host.holds == []
+
+
 def test_closing_the_daemon_closes_the_microphone(rig):
     instance, device, _focused, _ = rig
     press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
@@ -1157,6 +1172,38 @@ def test_the_first_press_that_needs_the_permission_asks_for_it_once(rig):
     press(instance, device, RETURN_SLOT, 3.0)
     press(instance, device, MIC_SLOT, 4.0, up_after=0.1)
     assert instance.host_typist.asked == 1, "one dialog, not one per press"
+
+
+def test_a_press_after_the_permission_is_granted_restarts_the_daemon_to_use_it(rig):
+    # A grant made in the dialog the daemon raised never reaches the daemon
+    # itself: only a process started afterwards can type (ADR 0017).
+    instance, device, _focused, _ = rig
+    host = instance.host_typist
+    host.allowed = False
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+
+    host.allowed_afresh = True
+    with pytest.raises(daemon_module.Restart):
+        press(instance, device, MIC_SLOT, 3.0)
+    assert not host.holding
+
+
+def test_a_permission_granted_without_the_daemon_asking_still_restarts_it(rig):
+    # Allowed in System Settings, or in a dialog macOS raised on its own.
+    instance, device, _focused, _ = rig
+    instance.host_typist.allowed = False
+    instance.host_typist.allowed_afresh = True
+    with pytest.raises(daemon_module.Restart):
+        press(instance, device, MIC_SLOT, 2.0)
+    assert instance.host_typist.asked == 0
+
+
+def test_a_press_before_the_permission_is_granted_does_not_restart(rig):
+    instance, device, _focused, _ = rig
+    instance.host_typist.allowed = False
+    press(instance, device, MIC_SLOT, 2.0, up_after=0.1)
+    press(instance, device, MIC_SLOT, 3.0, up_after=0.1)
+    assert device.flashed_slots == [MIC_SLOT, MIC_SLOT]
 
 
 def test_a_keybow_that_cannot_be_told_to_type_is_dropped_not_the_daemon(two_boards):

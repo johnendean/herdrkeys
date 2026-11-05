@@ -161,7 +161,9 @@ The CN001 cannot type, so the daemon types for it, which needs **Accessibility
 permission**. The first time you press its microphone or return key without it,
 the daemon asks macOS, the key flashes, and the log names the binary to allow
 in System Settings > Privacy & Security > Accessibility. Until then those two
-keys draw their symbols in grey. Dictating on the Keybow never needs it. If the
+keys draw their symbols in grey. Once you have allowed it, press either key
+again: macOS only lets a newly started process use the grant, so that press
+restarts the daemon in place, and the one after it types. Dictating on the Keybow never needs it. If the
 daemon crashes mid-dictation, Flow keeps listening until the daemon next starts
 -- the first thing it does is let go -- or until you tap the physical Right
 Option. See ADR 0017.

@@ -69,7 +69,17 @@ The daemon asks for the permission itself, once a run, on the first press that
 needs it, and logs which binary to allow. macOS grants it to whichever process
 asks, so asking from `doctor` or a command in a terminal would grant the
 terminal and leave the daemon without it. A press is the consent ADR 0004 asks
-for: nothing is requested until someone has tried to dictate on the CN001.
+for: nothing is requested until someone has tried to dictate on the CN001. That
+includes the release on startup, which is skipped without the permission:
+posting a key without it makes macOS raise a dialog of its own.
+
+A grant made in that dialog does not reach the daemon that raised it: macOS
+tells a running process about the permission only if it had it when it
+started (switched off and on again later, the change shows at once). So a
+press that cannot type first checks from a fresh process -- however the grant
+was made -- and if that one could, the daemon lets go of its boards and
+re-executes itself in place. The process ID stays, so neither launchd nor the Herdr hook notices. The
+press that finds the grant is spent on the restart; the next one types.
 
 ## Consequences
 

@@ -13,7 +13,7 @@ import subprocess
 from . import activate, cn001, discovery, herdr, herdr_state, macos, provision
 from .config import Config
 from .paths import resolve_config
-from .daemon import PROCESS_MARKER, Daemon
+from .daemon import PROCESS_MARKER, Daemon, Restart
 from .device import SerialDevice
 from .model import PROTOCOL_VERSION
 
@@ -255,9 +255,14 @@ def main(argv: list[str] | None = None) -> int:
         daemon.run_forever()
     except KeyboardInterrupt:
         return 0
+    except Restart:
+        pass
     finally:
         daemon.close()
-    return 0
+    # Started over in place rather than exited: the process ID stays, so
+    # neither launchd nor the Herdr hook that started it sees anything happen.
+    logging.shutdown()
+    os.execv(sys.executable, sys.orig_argv)
 
 
 if __name__ == "__main__":

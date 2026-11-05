@@ -88,6 +88,16 @@ def remove_legacy_slot_map() -> None:
     log.info("removed the old slot map at %s; keys follow herdr's order now", path)
 
 
+class Restart(Exception):
+    """The daemon wants to start over as a fresh process.
+
+    Raised once it can see that the permission to type has been granted: macOS
+    tells a running process about a grant only if it had one when it started,
+    so the grant made in the dialog the daemon raised is one only a new process
+    can use (ADR 0017).
+    """
+
+
 class Board:
     """One keypad: how to reach it, and what it was last shown.
 
@@ -192,8 +202,11 @@ class Daemon:
         # A daemon that crashed holding the hotkey left Flow listening, and
         # launchd restarting it is what brings us here: let go before anything
         # else. A release with nothing held does nothing, so this costs nothing
-        # on an ordinary start.
-        self._quietly(lambda: host_typist.hold(False))
+        # on an ordinary start. Unless it cannot type: then nothing it posts
+        # lands, and posting anyway makes macOS ask for the permission before
+        # anyone has tried to dictate.
+        if host_typist.can_type():
+            self._quietly(lambda: host_typist.hold(False))
 
     # -- connections -----------------------------------------------------
 
@@ -508,6 +521,11 @@ class Daemon:
             # so a press that cannot type says so on the key you pressed
             # rather than lighting a microphone nobody is listening to.
             if not self._can_type(self._typist(device)):
+                # However it was granted -- in the dialog we raised, one macOS
+                # raised, or in System Settings -- only a new process can use it.
+                if self.host_typist.can_type_afresh():
+                    log.info("allowed to type now; restarting to use it")
+                    raise Restart
                 self._ask_to_type()
                 try:
                     device.flash(slot)
