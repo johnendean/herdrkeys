@@ -274,8 +274,10 @@ def rasterise(shapes: list[list[Point]], view: float, pixels: int) -> bytes:
             winding += direction
             if winding == 0 or following[0] is None:
                 continue
+            # Half-open, [x, next): a sample exactly on the edge between two
+            # filled spans belongs to the right-hand one only, never both.
             first = max(0, math.ceil(x - 0.5))
-            last = min(grid - 1, math.floor(following[0] - 0.5))
+            last = min(grid - 1, math.ceil(following[0] - 0.5) - 1)
             out_row = (row // SUPERSAMPLE) * pixels
             for column in range(first, last + 1):
                 counts[out_row + column // SUPERSAMPLE] += 1

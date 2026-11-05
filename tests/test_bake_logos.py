@@ -80,3 +80,12 @@ def test_every_logo_is_a_square_of_coverage_with_something_in_it():
         mask = logos.mask(name)
         assert len(mask) == logos.LOGO_PIXELS**2, name
         assert 255 in mask and 0 in mask, name
+
+
+def test_a_sample_on_an_edge_shared_by_two_filled_spans_is_counted_once():
+    # A square inside another, wound the same way, so both spans either side
+    # of the inner edge are filled. That edge falls exactly on a sample point
+    # (2.125 * SUPERSAMPLE = 8.5), and counting it twice would push a pixel
+    # past 255.
+    mask = bake.mask_from_svg(svg("M0 0H8V8H0zM2.125 2H6V6H2.125z", view=8), pixels=8)
+    assert mask == bytes([255]) * 64
