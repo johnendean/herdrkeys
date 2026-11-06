@@ -1,0 +1,7 @@
+# The firmware is embedded in the binary and written to boards byte for byte,
+# and release builds must be reproducible wherever they are made. A Windows
+# checkout with core.autocrlf would otherwise embed different bytes.
+device/*.py text eol=lf
+internal/cn001/logos/*.mask binary
+checksums.txt text eol=lf
+*.sh text eol=lf

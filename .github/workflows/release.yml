@@ -1,0 +1,39 @@
+name: Release
+
+# Publishes the binaries for a version tag. The install downloads them and
+# checks them against checksums.txt in the tagged commit, so this refuses to
+# publish anything that does not reproduce those sums exactly. See ADR 0020.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Tag matches the manifest version
+        run: |
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' herdr-plugin.toml | head -n 1)
+          echo "tag ${GITHUB_REF_NAME}, manifest v${version}"
+          [ "${GITHUB_REF_NAME}" = "v${version}" ]
+
+      - run: go test ./...
+
+      - name: Rebuild and compare with the committed checksums
+        run: go run ./tools/release -check
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* checksums.txt \
+            --verify-tag --title "${GITHUB_REF_NAME}" --generate-notes

@@ -1,33 +1,65 @@
 id = "herdrkeys"
 name = "herdrkeys"
-version = "0.1.0"
-min_herdr_version = "0.8.0"
+# Also the release tag the install fetches (v0.2.0), and herdrkeys' own
+# version: a test holds the binary to it.
+version = "0.2.0"
+# The version the Windows named-pipe naming was checked against (ADR 0021).
+min_herdr_version = "0.9.5"
 description = "Show Herdr agent state on a Pimoroni Keybow 2040 or a Soomfon CN001, and focus agents from their keys"
-platforms = ["macos"]
+platforms = ["macos", "windows"]
 
-# No build step in the usual sense: the daemon has no third-party dependencies,
-# so there is nothing to compile or install. This only starts it, so that
-# installing the plugin is enough on its own -- startup hooks do not run until
-# Herdr next starts.
+# Install fetches the release binary for this platform, checks it against
+# checksums.txt at this commit, and starts the daemon -- so installing is
+# enough on its own, since startup hooks do not run until Herdr next starts.
+# A checkout with a binary of its own skips the download. See ADR 0020.
 [[build]]
-command = ["./bin/herdrkeys-start"]
+platforms = ["macos"]
+command = ["sh", "./bin/fetch.sh"]
 
-# Startup hooks are one-shot and unsupervised, so this script detaches the
-# daemon and exits. The daemon reconnects to both Herdr and the keypad on its
-# own and never exits voluntarily.
+[[build]]
+platforms = ["windows"]
+command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "bin/fetch.ps1"]
+
+# Every runtime command below is one argv for every platform. The binary is
+# bin/herdrkeys.exe on Windows, and Herdr there resolves the extensionless
+# path to it (checked for herdrcolor against Herdr 0.9.5). Per-platform
+# duplicates are not an option: Herdr rejects two actions with the same id
+# even when their platforms differ.
+
+# Startup hooks are one-shot and unsupervised, so `start` detaches the daemon
+# and exits. It is idempotent, and a start from a newer build takes over from
+# an older one still running -- which is how an update reaches the boards. The
+# daemon reconnects to Herdr and to each board on its own and never exits
+# voluntarily.
 [[startup]]
-command = ["./bin/herdrkeys-start"]
+command = ["./bin/herdrkeys", "start"]
 
 [[actions]]
 id = "doctor"
 title = "herdrkeys: check setup"
-description = "Report on Herdr, the keypad, and the daemon"
+description = "Report on Herdr, the boards, the dictation chord and the daemon"
 contexts = ["global"]
 command = ["./bin/herdrkeys", "doctor"]
 
 [[actions]]
 id = "adopt"
 title = "herdrkeys: adopt this keypad"
-description = "Save any firmware already on the board, then take it over"
+description = "Save any firmware already on the Keybow, then take it over"
 contexts = ["global"]
 command = ["./bin/herdrkeys", "adopt"]
+
+# Herdr has no uninstall hook, so this is uninstall's first step: it stops the
+# daemon cleanly, blanking the CN001 and letting go of the dictation chord.
+[[actions]]
+id = "stop"
+title = "herdrkeys: stop"
+description = "Stop the daemon and blank the boards (do this before uninstalling)"
+contexts = ["global"]
+command = ["./bin/herdrkeys", "stop"]
+
+[[actions]]
+id = "start"
+title = "herdrkeys: start"
+description = "Start the daemon, or take over from an older one"
+contexts = ["global"]
+command = ["./bin/herdrkeys", "start"]

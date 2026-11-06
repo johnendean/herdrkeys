@@ -11,21 +11,22 @@ decided here and nowhere else.
 The microphone is the exception that proves it. There is one microphone however
 many boards are attached, so whether a press is a hold or a tap, and when the
 microphone closes, is decided by the host (ADR 0017). This board still types
-for itself -- holding Right Option, which is what Wispr Flow listens for, and
-typing Return -- but only what the host tells it to, and it lets go by itself
-if the host goes quiet.
+for itself -- holding the dictation chord Wispr Flow listens for, which the
+host names on every hold, and typing Return -- but only what the host tells it
+to, and it lets go by itself if the host goes quiet.
 
 Wire protocol, newline-delimited JSON on the usb_cdc data channel:
 
-    in   {"v":2,"t":"hello"}
-         {"v":2,"t":"frame","k":"iwB------------f"}
-         {"v":2,"t":"frame","k":"iwB------------f","c":["#a6e3a1",null,...]}
-         {"v":2,"t":"flash"}
-         {"v":2,"t":"hold","on":true}
-         {"v":2,"t":"return"}
-    out  {"v":2,"t":"hello","proto":2,"fw":"herdrkeys-device/0.9.0"}
-         {"v":2,"t":"key","k":3}
-         {"v":2,"t":"up","k":3}
+    in   {"v":3,"t":"hello"}
+         {"v":3,"t":"frame","k":"iwB------------f"}
+         {"v":3,"t":"frame","k":"iwB------------f","c":["#a6e3a1",null,...]}
+         {"v":3,"t":"flash"}
+         {"v":3,"t":"hold","on":true,"keys":["LEFT_CONTROL","LEFT_GUI"]}
+         {"v":3,"t":"hold","on":false}
+         {"v":3,"t":"return"}
+    out  {"v":3,"t":"hello","proto":3,"fw":"herdrkeys-device/0.10.0"}
+         {"v":3,"t":"key","k":3}
+         {"v":3,"t":"up","k":3}
 """
 
 import json
@@ -51,8 +52,15 @@ except Exception:
     DICTATION_KEY = None
     RETURN_KEY = None
 
-PROTOCOL = 2
-FIRMWARE = "herdrkeys-device/0.9.0"
+# The keys a dictation chord may be made of, by adafruit_hid name. The host
+# names the chord; these are the names it may use (protocol 3).
+CHORD_KEYS = (
+    "LEFT_CONTROL", "RIGHT_CONTROL", "LEFT_SHIFT", "RIGHT_SHIFT",
+    "LEFT_ALT", "RIGHT_ALT", "LEFT_GUI", "RIGHT_GUI", "F13", "F14", "F15",
+)
+
+PROTOCOL = 3
+FIRMWARE = "herdrkeys-device/0.10.0"
 
 # --- palette ---------------------------------------------------------------
 # Focus is shown by brightness, never by hue.
@@ -201,7 +209,7 @@ last_rgb = [None] * 16
 pressed_before = [False] * 16
 flash_until = 0.0
 buffer = ""
-holding = False         # whether this board is holding the dictation key down
+held = []              # the keycodes this board is holding down for dictation
 return_down = None      # the return key's slot while a finger is on it
 
 
@@ -264,21 +272,41 @@ def names_a_microphone(keys_string):
     return any(code in MIC_CODES for code in keys_string)
 
 
-def hold_mic():
-    """Hold the dictation hotkey down, because the host said to."""
-    global holding
-    if keyboard is None or holding:
+def chord_from(names):
+    """The keycodes a hold message names, or the default chord.
+
+    The host chooses the dictation chord and names it on every hold (protocol
+    3), so the board keeps no setting of its own. A host that names none, or
+    names nothing this board knows, gets Right Option, as every older host
+    meant. Only modifiers and F13-F15 are accepted: a chord of ordinary keys
+    would type into whatever has focus for as long as dictation runs.
+    """
+    codes = []
+    if isinstance(names, list):
+        for name in names:
+            if isinstance(name, str) and name in CHORD_KEYS:
+                code = getattr(Keycode, name, None)
+                if code is not None and code not in codes:
+                    codes.append(code)
+    return codes or [DICTATION_KEY]
+
+
+def hold_mic(names=None):
+    """Hold the dictation chord down, because the host said to."""
+    global held
+    if keyboard is None or held:
         return
     # Only under a frame with a microphone key in it: a frame going stale, or
     # stopping naming one, is what lets go again if the host dies -- so a hold
     # with no frame at all would have nothing to end it.
     if frame is None or not names_a_microphone(frame):
         return
+    codes = chord_from(names)
     try:
-        keyboard.press(DICTATION_KEY)
+        keyboard.press(*codes)
     except Exception:
         return  # a keystroke that will not go is not worth crashing the keypad
-    holding = True
+    held = codes
 
 
 def release_mic():
@@ -286,16 +314,16 @@ def release_mic():
 
     Called when the host says so, when a frame stops naming a microphone, and
     when the host goes quiet: a modifier held down by a board whose daemon has
-    died would turn every later keystroke into an Option chord.
+    died would turn every later keystroke into a chord.
     """
-    global holding
-    if not holding:
+    global held
+    if not held:
         return
-    holding = False
+    codes, held = held, []
     if keyboard is None:
         return
     try:
-        keyboard.release(DICTATION_KEY)
+        keyboard.release(*codes)
     except Exception:
         pass
 
@@ -374,7 +402,7 @@ def colour_for(code, now, slot):
 
 def paint(now):
     stale = frame is None or (now - frame_at) > HOST_TIMEOUT
-    if holding and (stale or not names_a_microphone(frame)):
+    if held and (stale or not names_a_microphone(frame)):
         release_mic()
     # A slow blink rather than a steady colour: whether a hue reads as intended
     # depends on the LED, but motion does not, and this must never be mistaken
@@ -416,7 +444,7 @@ def handle(message):
                 frame_colours = None
     elif kind == "hold":
         if message.get("on") is True:
-            hold_mic()
+            hold_mic(message.get("keys"))
         else:
             release_mic()
     elif kind == "return":

@@ -1,8 +1,12 @@
+# The binary: fetched by bin/fetch.sh or bin/fetch.ps1 at install, or built
+# with `go build` for development. Never committed (ADR 0020).
+/bin/herdrkeys
+/bin/herdrkeys.exe
+/bin/*.download*
+/dist/
+
+# The firmware's tests still run under CPython.
 .venv/
 __pycache__/
-*.egg-info/
 .pytest_cache/
 .vscode/
-
-# launchd writes the agent's output here (see launchd/)
-herdrkeys.log

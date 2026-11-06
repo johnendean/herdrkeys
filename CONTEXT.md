@@ -130,9 +130,15 @@ A draft counts. Only GitHub's are known about; elsewhere, and whenever finding
 out fails or is slow, the git key behaves as if there were none.
 
 **Microphone** — Wispr Flow listening because a keypad is holding down the
-hotkey it dictates on. There is one, however many boards are attached: opened
+**dictation chord**. There is one, however many boards are attached: opened
 on one board it is open on all of them, and any board's microphone or return
 key closes it.
+
+**Dictation chord** — The keys Wispr Flow treats as push-to-talk, which
+whatever types for a board holds down while the microphone is open. It is a
+setting of the host, not of a board: every board holds the same chord. Not "the
+hotkey": the chord is what herdrkeys holds, and it only works if it matches
+the binding Flow listens for.
 
 **Microphone key** — Slot 12. Held, it opens the **microphone** for as long as
 it is held; tapped, it **latches** it open until the next tap. The frame says

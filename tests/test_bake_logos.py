@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys import logos
-
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "bake_logos.py"
 _spec = importlib.util.spec_from_file_location("bake_logos", SCRIPT)
 bake = importlib.util.module_from_spec(_spec)
@@ -70,16 +68,22 @@ def test_a_cubic_bulges_toward_its_controls():
     assert covered(bulged, 8, 4, 2) > 0
 
 
-def test_the_checked_in_logos_are_what_the_script_makes_of_the_svgs():
-    # The module is generated, and must never drift from its sources.
-    assert Path(logos.__file__).read_text() == bake.module_source()
+MASKS = SCRIPT.parent.parent / "internal" / "cn001" / "logos"
+
+
+def test_the_checked_in_masks_are_what_the_script_makes_of_the_svgs():
+    # They are generated, and must never drift from their sources.
+    made = bake.masks()
+    assert sorted(made) == sorted(p.stem for p in MASKS.glob("*.mask"))
+    for name, data in made.items():
+        assert (MASKS / f"{name}.mask").read_bytes() == data, name
 
 
 def test_every_logo_is_a_square_of_coverage_with_something_in_it():
-    for name in logos.names():
-        mask = logos.mask(name)
-        assert len(mask) == logos.LOGO_PIXELS**2, name
-        assert 255 in mask and 0 in mask, name
+    for path in MASKS.glob("*.mask"):
+        mask = path.read_bytes()
+        assert len(mask) == bake.LOGO_PIXELS**2, path.name
+        assert 255 in mask and 0 in mask, path.name
 
 
 def test_a_sample_on_an_edge_shared_by_two_filled_spans_is_counted_once():

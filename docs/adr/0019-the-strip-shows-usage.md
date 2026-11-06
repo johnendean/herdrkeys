@@ -9,6 +9,12 @@ Accepted
 Takes up the **strip** that ADR 0014 left dark. Adds a second outside source
 beside Herdr. The frame, the Keybow and the TUI are unchanged.
 
+Amended 2026-11-06 for Windows (ADR 0020). There, Claude Code keeps the token
+in `%USERPROFILE%\.claude\.credentials.json`, a plain file that herdrkeys can
+read without any prompt. The strip stays on by default anyway. On Windows,
+installing the plugin with a CN001 attached counts as the consent, and `doctor`
+names the file read. The rule is unchanged: read, never write, never refresh.
+
 ## Context
 
 The CN001 has three small displays to the right of its keys. They report
