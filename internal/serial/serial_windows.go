@@ -3,21 +3,28 @@ package serial
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// windowsPort is a COM port opened for overlapped I/O, so the *os.File it
-// becomes is driven by the runtime's completion port: a pending read does not
-// pin a thread, a write is not queued behind it, and Close cancels it.
+// windowsPort is a COM port driven with overlapped I/O by hand.
+//
+// Not an *os.File: Go lets only one read or write on a file run at a time,
+// overlapped handle or not, so a read waiting for a key press would hold up
+// every frame written meanwhile. Here a read and a write each have an
+// operation of their own, and Close cancels both.
 type windowsPort struct {
-	file   *os.File
-	handle windows.Handle
-	closed atomic.Bool
+	handle  windows.Handle
+	path    string
+	reading sync.Mutex
+	writing sync.Mutex
+	readEv  windows.Handle
+	writeEv windows.Handle
+	closed  atomic.Bool
 }
 
 const (
@@ -47,17 +54,18 @@ func open(path string, baud int) (Port, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if err := configure(handle, baud); err != nil {
-		windows.CloseHandle(handle)
+	p := &windowsPort{handle: handle, path: path}
+	if err := p.setUp(baud); err != nil {
+		p.release()
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return &windowsPort{file: os.NewFile(uintptr(handle), path), handle: handle}, nil
+	return p, nil
 }
 
-func configure(handle windows.Handle, baud int) error {
+func (p *windowsPort) setUp(baud int) error {
 	var dcb windows.DCB
 	dcb.DCBlength = uint32(unsafe.Sizeof(dcb))
-	if err := windows.GetCommState(handle, &dcb); err != nil {
+	if err := windows.GetCommState(p.handle, &dcb); err != nil {
 		return err
 	}
 	dcb.BaudRate = uint32(baud)
@@ -68,50 +76,77 @@ func configure(handle windows.Handle, baud int) error {
 	// channel as connected only while the host holds DTR, and its REPL does
 	// not answer without it.
 	dcb.Flags = dcbBinary | dcbDtrEnable | dcbRtsEnable
-	if err := windows.SetCommState(handle, &dcb); err != nil {
+	if err := windows.SetCommState(p.handle, &dcb); err != nil {
 		return err
 	}
 	// Return as soon as anything has arrived, and otherwise wait for it --
-	// "forever" being the largest timeout Windows takes short of none. A read
-	// that came back empty would read as end of file.
-	return windows.SetCommTimeouts(handle, &windows.CommTimeouts{
+	// "forever" being the largest timeout Windows takes short of none.
+	if err := windows.SetCommTimeouts(p.handle, &windows.CommTimeouts{
 		ReadIntervalTimeout:        maxDword,
 		ReadTotalTimeoutMultiplier: maxDword,
 		ReadTotalTimeoutConstant:   maxDword - 1,
 		WriteTotalTimeoutConstant:  writeTimeout,
-	})
+	}); err != nil {
+		return err
+	}
+	var err error
+	if p.readEv, err = windows.CreateEvent(nil, 1, 0, nil); err != nil {
+		return err
+	}
+	p.writeEv, err = windows.CreateEvent(nil, 1, 0, nil)
+	return err
+}
+
+// io runs one overlapped operation to completion.
+func (p *windowsPort) io(event windows.Handle, op func(*uint32, *windows.Overlapped) error) (int, error) {
+	if p.closed.Load() {
+		return 0, ErrClosed
+	}
+	var done uint32
+	o := windows.Overlapped{HEvent: event}
+	err := op(&done, &o)
+	if errors.Is(err, windows.ERROR_IO_PENDING) {
+		err = windows.GetOverlappedResult(p.handle, &o, &done, true)
+	}
+	if p.closed.Load() {
+		return int(done), ErrClosed
+	}
+	if err != nil {
+		return int(done), fmt.Errorf("%s: %w", p.path, err)
+	}
+	return int(done), nil
 }
 
 func (p *windowsPort) Read(buf []byte) (int, error) {
+	p.reading.Lock()
+	defer p.reading.Unlock()
 	for {
-		if p.closed.Load() {
-			return 0, ErrClosed
-		}
-		n, err := p.file.Read(buf)
-		if p.closed.Load() {
-			return 0, ErrClosed
-		}
-		if err != nil {
-			return n, fmt.Errorf("%s: %w", p.file.Name(), err)
-		}
-		if n > 0 {
-			return n, nil
+		n, err := p.io(p.readEv, func(done *uint32, o *windows.Overlapped) error {
+			return windows.ReadFile(p.handle, buf, done, o)
+		})
+		if err != nil || n > 0 {
+			return n, err
 		}
 	}
 }
 
 func (p *windowsPort) Write(buf []byte) (int, error) {
-	if p.closed.Load() {
-		return 0, ErrClosed
-	}
-	n, err := p.file.Write(buf)
-	if err != nil {
-		if errors.Is(err, os.ErrClosed) {
-			return n, ErrClosed
+	p.writing.Lock()
+	defer p.writing.Unlock()
+	written := 0
+	for written < len(buf) {
+		n, err := p.io(p.writeEv, func(done *uint32, o *windows.Overlapped) error {
+			return windows.WriteFile(p.handle, buf[written:], done, o)
+		})
+		written += n
+		if err != nil {
+			return written, err
 		}
-		return n, fmt.Errorf("%s: %w", p.file.Name(), err)
+		if n == 0 {
+			return written, fmt.Errorf("%s: write timed out", p.path)
+		}
 	}
-	return n, nil
+	return written, nil
 }
 
 func (p *windowsPort) Flush() {
@@ -120,9 +155,26 @@ func (p *windowsPort) Flush() {
 	}
 }
 
+// Close cancels a read or write in flight, waits for it to give up, and
+// lets the port go.
 func (p *windowsPort) Close() error {
 	if p.closed.Swap(true) {
 		return nil
 	}
-	return p.file.Close()
+	windows.CancelIoEx(p.handle, nil)
+	p.reading.Lock()
+	p.writing.Lock()
+	defer p.reading.Unlock()
+	defer p.writing.Unlock()
+	return p.release()
+}
+
+func (p *windowsPort) release() error {
+	if p.readEv != 0 {
+		windows.CloseHandle(p.readEv)
+	}
+	if p.writeEv != 0 {
+		windows.CloseHandle(p.writeEv)
+	}
+	return windows.CloseHandle(p.handle)
 }

@@ -200,6 +200,7 @@ func HardReset(consolePort string) bool {
 	prompt := make(chan bool, 1)
 	go func() {
 		var seen []byte
+		pressed := false
 		buf := make([]byte, 256)
 		for {
 			n, err := port.Read(buf)
@@ -208,6 +209,13 @@ func HardReset(consolePort string) bool {
 				return
 			}
 			seen = append(seen, buf[:n]...)
+			// An interrupted code.py ends at "Press any key to enter the
+			// REPL", on CircuitPython 10 at least, and waits there for the
+			// key it names.
+			if !pressed && bytes.Contains(seen, []byte("Press any key")) {
+				pressed = true
+				port.Write([]byte("\r"))
+			}
 			if bytes.Contains(seen, []byte(">>> ")) {
 				prompt <- true
 				return

@@ -25,6 +25,9 @@ type Key struct {
 	// a modifier sets while it is down (0 for a key that is not a modifier).
 	MacCode uint16
 	MacFlag uint64
+	// MacDevice is the NX_DEVICE* bit saying which of a pair of modifiers it
+	// was: Flow tells Right Option from Left by it.
+	MacDevice uint64
 }
 
 // Modifier flags, from CGEventTypes.h.
@@ -39,17 +42,17 @@ const (
 // ordinary keys would type into whatever has focus while dictation runs; and
 // F13-F15, which no keyboard has and every OS passes through.
 var keys = []Key{
-	{"LEFT_CONTROL", 0xA2, 0x3B, macControl},
-	{"RIGHT_CONTROL", 0xA3, 0x3E, macControl},
-	{"LEFT_SHIFT", 0xA0, 0x38, macShift},
-	{"RIGHT_SHIFT", 0xA1, 0x3C, macShift},
-	{"LEFT_ALT", 0xA4, 0x3A, macOption},
-	{"RIGHT_ALT", 0xA5, 0x3D, macOption},
-	{"LEFT_GUI", 0x5B, 0x37, macCommand},
-	{"RIGHT_GUI", 0x5C, 0x36, macCommand},
-	{"F13", 0x7C, 0x69, 0},
-	{"F14", 0x7D, 0x6B, 0},
-	{"F15", 0x7E, 0x71, 0},
+	{"LEFT_CONTROL", 0xA2, 0x3B, macControl, 0x0001},
+	{"RIGHT_CONTROL", 0xA3, 0x3E, macControl, 0x2000},
+	{"LEFT_SHIFT", 0xA0, 0x38, macShift, 0x0002},
+	{"RIGHT_SHIFT", 0xA1, 0x3C, macShift, 0x0004},
+	{"LEFT_ALT", 0xA4, 0x3A, macOption, 0x0020},
+	{"RIGHT_ALT", 0xA5, 0x3D, macOption, 0x0040},
+	{"LEFT_GUI", 0x5B, 0x37, macCommand, 0x0008},
+	{"RIGHT_GUI", 0x5C, 0x36, macCommand, 0x0010},
+	{"F13", 0x7C, 0x69, 0, 0},
+	{"F14", 0x7D, 0x6B, 0, 0},
+	{"F15", 0x7E, 0x71, 0, 0},
 }
 
 // aliases are the names a person might write in config.toml for each key.

@@ -17,7 +17,11 @@ func TestAPortThatIsNotThereFailsToOpen(t *testing.T) {
 // names its data port (COM4, /dev/cu.usbmodem…). Nothing else can stand in for
 // a real CDC port, and DTR, timeouts and cancellation are exactly what
 // differ between the platforms.
-func TestALiveKeybowAnswersAndClosingUnblocksARead(t *testing.T) {
+//
+// The read starts first and the writes follow, because that is how the
+// daemon uses a port: a read always waiting for a key press, and frames
+// written past it. A port that serialised the two hung on the first write.
+func TestALiveKeybowAnswersWhileAReadIsWaiting(t *testing.T) {
 	path := os.Getenv("HERDRKEYS_KEYBOW_PORT")
 	if path == "" {
 		t.Skip("set HERDRKEYS_KEYBOW_PORT to a Keybow's data port")
@@ -27,14 +31,11 @@ func TestALiveKeybowAnswersAndClosingUnblocksARead(t *testing.T) {
 		t.Fatal(err)
 	}
 	port.Flush()
-	if _, err := port.Write([]byte(`{"v":2,"t":"hello"}` + "\n")); err != nil {
-		t.Fatal(err)
-	}
 
-	got := make(chan []byte, 1)
+	lines := make(chan []byte, 16)
 	failed := make(chan error, 1)
 	go func() {
-		var all []byte
+		var pending []byte
 		buf := make([]byte, 256)
 		for {
 			n, err := port.Read(buf)
@@ -42,20 +43,40 @@ func TestALiveKeybowAnswersAndClosingUnblocksARead(t *testing.T) {
 				failed <- err
 				return
 			}
-			all = append(all, buf[:n]...)
-			if bytes.Contains(all, []byte(`"hello"`)) && bytes.Contains(all, []byte("\n")) {
-				got <- all
-				// Keep reading: this read is the one Close must unblock.
+			pending = append(pending, buf[:n]...)
+			for {
+				i := bytes.IndexByte(pending, '\n')
+				if i < 0 {
+					break
+				}
+				lines <- bytes.TrimSpace(pending[:i])
+				pending = pending[i+1:]
 			}
 		}
 	}()
-	select {
-	case reply := <-got:
-		t.Logf("%s answered: %s", path, bytes.TrimSpace(reply))
-	case err := <-failed:
-		t.Fatal(err)
-	case <-time.After(3 * time.Second):
-		t.Fatal("no hello from the keypad")
+	time.Sleep(200 * time.Millisecond) // the read is now waiting
+
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		if _, err := port.Write([]byte(`{"v":3,"t":"hello"}` + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		if took := time.Since(start); took > time.Second {
+			t.Fatalf("a write took %v behind a waiting read", took)
+		}
+		select {
+		case reply := <-lines:
+			if !bytes.Contains(reply, []byte(`"hello"`)) {
+				t.Fatalf("answered %s", reply)
+			}
+			if i == 0 {
+				t.Logf("%s answered: %s", path, reply)
+			}
+		case err := <-failed:
+			t.Fatal(err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("no hello from the keypad")
+		}
 	}
 
 	start := time.Now()
