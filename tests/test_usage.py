@@ -261,6 +261,35 @@ def test_a_429_backs_the_polling_off():
     assert ask.asked == 2, "should wait four minutes after a second 429"
     poller.tick(360.0, wanted=True)
     assert ask.asked == 3 and poller.reading == READING
+    poller.tick(419.0, wanted=True)
+    assert ask.asked == 3
+    poller.tick(420.0, wanted=True)
+    assert ask.asked == 4, "should be back to once a minute after a recovery"
+
+
+def test_recovering_from_the_longest_backoff_polls_a_minute_later_not_fifteen():
+    # Issue #28: the reading went stale before it was next refreshed.
+    ask = Asker(*[RateLimited("429")] * 6, READING)
+    poller = Poller(ask=ask, spawn=inline)
+    now = 0.0
+    while poller.reading is None:
+        poller.tick(now, wanted=True)
+        now += 1.0
+    recovered = poller.read_at
+    poller.tick(recovered + usage.POLL_SECONDS, wanted=True)
+    assert ask.asked == 8
+    assert not poller.stale(recovered + usage.POLL_SECONDS)
+
+
+def test_the_next_request_is_a_minute_after_the_last_one_started_however_long_it_took():
+    started = []
+    poller = Poller(ask=Asker(READING), spawn=started.append)
+    poller.tick(0.0, wanted=True)
+    started.pop()()  # answered, but only collected 45 seconds in
+    poller.tick(45.0, wanted=True)
+    assert poller.read_at == 45.0 and not started
+    poller.tick(60.0, wanted=True)
+    assert len(started) == 1
 
 
 def test_an_unexpected_exception_in_the_worker_is_usage_unknown_not_a_crash():
