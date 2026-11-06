@@ -240,10 +240,10 @@ func TestWhereAPressGoes(t *testing.T) {
 func TestGhIsAskedAboutThePagesRepository(t *testing.T) {
 	calls := fakeRun(t, `[{"url": "`+page+`/pull/9", "headRefName": "feature", "isCrossRepository": false},
 		{"url": "`+page+`/pull/4", "headRefName": "main", "isCrossRepository": true}]`, nil)
-	pulls, ok := OpenPullRequests(page)
+	pulls, err := OpenPullRequests(page)
 	want := []PullRequest{pull("9", "feature"), {URL: page + "/pull/4", Head: "main", FromFork: true}}
-	if !ok || !slices.Equal(pulls, want) {
-		t.Fatalf("%v %v", pulls, ok)
+	if err != nil || !slices.Equal(pulls, want) {
+		t.Fatalf("%v %v", pulls, err)
 	}
 	argv := (*calls)[0]
 	if !slices.Equal(argv[:3], []string{"gh", "pr", "list"}) {
@@ -265,7 +265,7 @@ func TestEveryWayGhCanFailIsNotKnowing(t *testing.T) {
 		{`[{"url": "x"}]`, nil}, // a shape that was not asked for
 	} {
 		fakeRun(t, c.out, c.err)
-		if _, ok := OpenPullRequests(page); ok {
+		if _, err := OpenPullRequests(page); err == nil {
 			t.Errorf("%q, %v counted as knowing", c.out, c.err)
 		}
 	}
@@ -285,5 +285,19 @@ func TestOnlyAForgesOwnPublicHostIsThatForge(t *testing.T) {
 		if got := Forge(p); got != want {
 			t.Errorf("%q = %q, want %q", p, got, want)
 		}
+	}
+}
+
+func TestGhIsFoundWhereItIsInstalledEvenOffThePath(t *testing.T) {
+	// The daemon runs with Herdr's PATH, which on the first Windows machine
+	// it ran on did not include GitHub CLI's directory -- so every press
+	// opened the page and never the pull request.
+	want := Find("gh")
+	if want == "gh" {
+		t.Skip("gh is not installed here")
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := Find("gh"); got != want {
+		t.Fatalf("found %q off the path, want %q", got, want)
 	}
 }

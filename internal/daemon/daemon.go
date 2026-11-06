@@ -232,7 +232,12 @@ func GoToGit(cwd string) bool {
 	if page == "" {
 		return false
 	}
-	pulls, _ := remote.OpenPullRequests(page)
+	pulls, err := remote.OpenPullRequests(page)
+	if err != nil {
+		// The page it is, as the key always did -- but say why, since
+		// nothing on the board can.
+		slog.Info("pull requests unknown, so opening the page: " + err.Error())
+	}
 	url := remote.Destination(page, remote.CurrentBranch(cwd), pulls)
 	slog.Info("opening " + url)
 	remote.OpenURL(url)

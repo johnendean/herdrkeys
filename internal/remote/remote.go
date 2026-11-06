@@ -13,8 +13,11 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,7 +233,7 @@ type Runner func(ctx context.Context, env []string, name string, args ...string)
 
 // Run is the real Runner.
 var Run Runner = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, Find(name), args...)
 	cmd.Env = env
 	cmd.Stdin = nil
 	hideWindow(cmd)
@@ -311,14 +314,14 @@ func CurrentBranch(cwd string) string {
 }
 
 // OpenPullRequests is every open pull request on the repository at page,
-// drafts included. False means "could not find out", which the caller
-// treats exactly as "there are none".
+// drafts included. An error means "could not find out", and says why; the
+// caller treats it exactly as "there are none".
 //
 // The repository is named outright from the page rather than left for `gh`
 // to infer from the checkout's remotes, so the pull requests are always those
 // of the repository the page is -- and `gh` never stops to ask which remote
 // is meant.
-func OpenPullRequests(page string) ([]PullRequest, bool) {
+func OpenPullRequests(page string) ([]PullRequest, error) {
 	repo := page
 	if _, after, ok := strings.Cut(page, "://"); ok {
 		repo = after
@@ -329,24 +332,28 @@ func OpenPullRequests(page string) ([]PullRequest, bool) {
 	out, err := Run(ctx, env, "gh", "pr", "list", "--repo", repo, "--state", "open",
 		"--limit", "100", "--json", "url,headRefName,isCrossRepository")
 	if err != nil {
-		return nil, false
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {
+			return nil, fmt.Errorf("gh: %s", bytes.TrimSpace(exit.Stderr))
+		}
+		return nil, fmt.Errorf("gh: %w", err)
 	}
 	var rows []struct {
 		URL      *string `json:"url"`
 		Head     *string `json:"headRefName"`
 		FromFork *bool   `json:"isCrossRepository"`
 	}
-	if json.Unmarshal(out, &rows) != nil {
-		return nil, false
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, fmt.Errorf("gh answered something that is not JSON: %w", err)
 	}
 	pulls := make([]PullRequest, 0, len(rows))
 	for _, row := range rows {
 		if row.URL == nil || row.Head == nil || row.FromFork == nil {
-			return nil, false // a shape that was not asked for
+			return nil, errors.New("gh answered in a shape that was not asked for")
 		}
 		pulls = append(pulls, PullRequest{URL: *row.URL, Head: *row.Head, FromFork: *row.FromFork})
 	}
-	return pulls, true
+	return pulls, nil
 }
 
 // Destination is where a press on the git key goes: the most specific place

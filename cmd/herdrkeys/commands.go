@@ -15,6 +15,7 @@ import (
 	"github.com/johnendean/herdrkeys/internal/host"
 	"github.com/johnendean/herdrkeys/internal/instance"
 	"github.com/johnendean/herdrkeys/internal/keybow"
+	"github.com/johnendean/herdrkeys/internal/remote"
 	"github.com/johnendean/herdrkeys/internal/state"
 	"github.com/johnendean/herdrkeys/internal/usage"
 )
@@ -64,6 +65,7 @@ func doctor(w io.Writer) int {
 		// is the only place the difference can be seen. Not a failure either
 		// way: no colours is what herdrkeys did before herdrcolor existed.
 		line(w, "colours", "%s", colourReport(agents))
+		line(w, "git key", "%s", gitReport(agents))
 	}
 
 	ports := keybow.FindPorts()
@@ -157,6 +159,33 @@ func colourReport(agents []state.Pane) string {
 		return fmt.Sprintf("all %d agents; their keys wear their project colour", len(agents))
 	}
 	return fmt.Sprintf("%d of %d agents; the rest fall back to agent state (herdrcolor may not have synced since they appeared)", coloured, len(agents))
+}
+
+// gitReport is where a press of the git key would go now, found the way a
+// press finds it -- so a lookup that fails in Herdr's environment, which a
+// plugin action shares with the daemon, shows here and says why.
+func gitReport(agents []state.Pane) string {
+	s := state.New()
+	s.ApplyAgents(agents)
+	cwd := ""
+	for _, p := range s.AgentPanes() {
+		if p.Focused {
+			cwd = p.Cwd
+		}
+	}
+	if cwd == "" {
+		return "no focused agent with a directory; a press flashes"
+	}
+	page := remote.PageFor(cwd)
+	if page == "" {
+		return cwd + " has no page; a press flashes"
+	}
+	pulls, err := remote.OpenPullRequests(page)
+	where := remote.Destination(page, remote.CurrentBranch(cwd), pulls)
+	if err != nil {
+		return fmt.Sprintf("%s  (pull requests unknown: %v)", where, err)
+	}
+	return where
 }
 
 // usageReport is what the CN001's strip would show (ADR 0019). Never a
