@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import activate as activate_app
 from . import cn001, discovery, herdr, provision, reducer
+from . import usage as usage_module
 from . import remote as remote_module
 from .config import Config
 from .device import Device, DeviceError, SerialDevice
@@ -191,6 +192,8 @@ class Daemon:
         # than done from the worker.
         self._git_lookup: Future | None = None
         self._spawn = _in_background
+        # The plan's usage, for any board with a strip to show it on (ADR 0019).
+        self.usage = usage_module.Poller()
         # The one microphone, and what types for a board that cannot (ADR 0017).
         if host_typist is None:
             from .macos import HostTypist
@@ -620,10 +623,20 @@ class Daemon:
             mic=self.microphone.state,
         )
 
+    def _shows_usage(self, device: Device) -> bool:
+        return self.config.usage and hasattr(device, "show_usage")
+
+    def _poll_usage(self, now: float) -> None:
+        """Keep usage fresh, but only while a board has somewhere to show it."""
+        wanted = any(self._shows_usage(board.device) for board in self._connected())
+        self.usage.tick(now, wanted=wanted)
+
     def _push(self, frame: Frame, now: float) -> None:
         for board in self._connected():
             due = now - board.last_push_at >= HEARTBEAT_SECONDS
             try:
+                if self._shows_usage(board.device):
+                    board.device.show_usage(self.usage.reading, stale=self.usage.stale(now))
                 if frame != board.last_frame or due:
                     board.device.send_frame(frame)
                     board.last_frame = frame
@@ -684,6 +697,7 @@ class Daemon:
                     self._drop_herdr(now, str(exc))
 
             self._collect_git_lookup()
+            self._poll_usage(now)
 
             # Render before sleeping, never after: rendering is what starts a
             # state settling, so doing it on the far side of the select would

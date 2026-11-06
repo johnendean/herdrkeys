@@ -1241,3 +1241,66 @@ def test_a_keybow_that_cannot_be_told_to_type_is_dropped_not_the_daemon(two_boar
     press(instance, keybow, MIC_SLOT, 2.0)
     assert instance.boards[0].device is None
     assert instance.render(2.0).keys[MIC_SLOT] == MIC, "a microphone nobody holds is not open"
+
+
+# -- usage on the strip (ADR 0019) ------------------------------------------------
+
+from herdrkeys import usage as usage_module  # noqa: E402
+
+
+class StripDevice(FakeDevice):
+    """A board with a strip, like the CN001."""
+
+    def __init__(self):
+        super().__init__()
+        self.shown = []
+
+    def show_usage(self, reading, *, stale):
+        self.shown.append((reading, stale))
+
+
+READING = usage_module.Usage(usage_module.Limit(7.0, None), usage_module.Limit(9.0, None))
+
+
+def usage_rig(rig, *, enabled=True):
+    instance, keybow, _, _ = rig
+    instance.config.usage = enabled
+    asked = []
+
+    def ask():
+        asked.append(1)
+        return READING
+
+    instance.usage = usage_module.Poller(ask=ask, spawn=lambda work: work())
+    return instance, keybow, asked
+
+
+def test_usage_is_not_asked_for_with_no_board_to_show_it_on(rig):
+    instance, _keybow, asked = usage_rig(rig)
+    instance._poll_usage(0.0)
+    assert asked == []
+
+
+def test_a_board_with_a_strip_is_shown_usage_and_how_old_it_is(rig):
+    instance, _keybow, asked = usage_rig(rig)
+    strip = StripDevice()
+    board = daemon_module.Board("cn001", lambda now: strip, Backoff(0.0, 0.0))
+    board.device = strip
+    instance.boards.append(board)
+    instance._poll_usage(0.0)
+    assert asked == [1]
+    instance._push(instance.render(0.0), 0.0)
+    assert strip.shown[-1] == (READING, False)
+    instance._push(instance.render(400.0), 400.0)
+    assert strip.shown[-1] == (READING, True), "five minutes without a reading is stale"
+
+
+def test_usage_can_be_turned_off(rig):
+    instance, _keybow, asked = usage_rig(rig, enabled=False)
+    strip = StripDevice()
+    board = daemon_module.Board("cn001", lambda now: strip, Backoff(0.0, 0.0))
+    board.device = strip
+    instance.boards.append(board)
+    instance._poll_usage(0.0)
+    instance._push(instance.render(0.0), 0.0)
+    assert asked == [] and strip.shown == []

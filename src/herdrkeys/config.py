@@ -26,6 +26,9 @@ class Config:
     # The CN001's panel, 0-100. Its LCD is far brighter than the Keybow's LEDs
     # at the same meaning, and the room decides how bright is right.
     cn001_brightness: int = 80
+    # The CN001's strip shows the Claude plan's usage, asked of Anthropic once
+    # a minute with Claude Code's own credential (ADR 0019).
+    usage: bool = True
 
     def __post_init__(self) -> None:
         if self.salvage_dir is None:
@@ -59,6 +62,8 @@ class Config:
             config.socket_path = Path(str(raw["socket_path"])).expanduser()
         if "cn001_brightness" in raw:
             config.cn001_brightness = max(0, min(100, int(raw["cn001_brightness"])))
+        if "usage" in raw:
+            config.usage = bool(raw["usage"])
         if raw.get("serial_port"):
             config.serial_port = str(raw["serial_port"])
         # `state_path` is accepted and ignored: it configured the slot map,

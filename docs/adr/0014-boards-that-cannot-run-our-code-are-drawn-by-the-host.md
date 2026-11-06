@@ -9,7 +9,8 @@ Accepted
 Narrows ADR 0010's "the device decides what every meaning looks like" to
 boards that run code of ours.
 
-Its dictation paragraph is replaced by ADR 0017.
+Its dictation paragraph is replaced by ADR 0017, and its strip paragraph by
+ADR 0019.
 
 ## Context
 

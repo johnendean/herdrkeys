@@ -538,3 +538,137 @@ def test_an_encoder_failure_is_the_boards_failure_not_the_daemons(monkeypatch):
     board = cn001.CN001Device(FakeHid(), clock=Clock(0.5))
     with pytest.raises(DeviceError):
         board.send_frame(frame({0: "i"}))
+
+
+# -- the strip ------------------------------------------------------------------
+
+from herdrkeys.usage import Limit, Usage  # noqa: E402
+
+WALL = 1_800_000_000.0
+HOUR = 3600.0
+TOP, MIDDLE, BOTTOM = cn001.STRIP_KEYS
+
+
+def reading(session=30.0, weekly=50.0, session_resets=2 * HOUR, weekly_resets=72 * HOUR):
+    return Usage(
+        None if session is None else Limit(session, WALL + session_resets if session_resets else None),
+        Limit(weekly, WALL + weekly_resets),
+    )
+
+
+def test_the_strip_is_dark_until_usage_has_been_known_once():
+    assert cn001.strip_panels(None, WALL, stale=False) == dict.fromkeys(cn001.STRIP_KEYS)
+
+
+def test_top_is_the_session_middle_the_week_bottom_the_wait():
+    panels = cn001.strip_panels(reading(session=7.0, weekly=9.0), WALL, stale=False)
+    assert (panels[TOP].label, panels[TOP].text, panels[TOP].fill) == ("5H", "7%", 0.07)
+    assert (panels[MIDDLE].label, panels[MIDDLE].text) == ("WEEK", "9%")
+    assert (panels[BOTTOM].label, panels[BOTTOM].text, panels[BOTTOM].fill) == ("RESET", "2:00", None)
+
+
+def test_a_gauge_is_neutral_then_amber_then_red_only_once_spent():
+    def colour(percent):
+        return cn001.strip_panels(reading(session=percent), WALL, stale=False)[TOP].colour
+
+    assert colour(79.9) == cn001.GAUGE
+    assert colour(80.0) == cn001.MARK_COLOUR["w"]
+    assert colour(99.9) == cn001.MARK_COLOUR["w"]
+    assert colour(100.0) == cn001.MARK_COLOUR["b"]
+
+
+def test_nearly_spent_never_reads_as_spent():
+    assert cn001.strip_panels(reading(session=99.6), WALL, stale=False)[TOP].text == "99%"
+
+
+def test_the_countdown_turns_red_and_follows_whichever_limit_stopped_you():
+    panels = cn001.strip_panels(reading(session=40.0, weekly=100.0, weekly_resets=50 * HOUR), WALL, stale=False)
+    assert panels[BOTTOM].colour == cn001.MARK_COLOUR["b"]
+    assert panels[BOTTOM].text == "2D2H"
+    calm = cn001.strip_panels(reading(), WALL, stale=False)
+    assert calm[BOTTOM].colour == cn001.GAUGE
+
+
+def test_with_no_session_the_gauge_is_empty_and_the_wait_is_a_dash():
+    panels = cn001.strip_panels(reading(session=None), WALL, stale=False)
+    assert (panels[TOP].text, panels[TOP].fill) == ("0%", 0.0)
+    assert panels[BOTTOM].text == "-"
+
+
+def test_a_session_whose_reset_has_passed_is_shown_reset_before_the_next_poll():
+    panels = cn001.strip_panels(reading(session=100.0, session_resets=60), WALL + 61, stale=False)
+    assert panels[TOP].text == "0%"
+    assert panels[TOP].colour == cn001.GAUGE
+    assert panels[BOTTOM].text == "-"
+
+
+def test_a_stale_reading_is_kept_but_drawn_grey():
+    panels = cn001.strip_panels(reading(session=100.0), WALL, stale=True)
+    assert all(panel.colour == cn001.MUTED and panel.stale for panel in panels.values())
+    assert panels[TOP].text == "100%"
+
+
+@pytest.mark.parametrize(
+    "seconds, text",
+    [(1, "1M"), (60, "1M"), (61, "2M"), (59 * 60, "59M"), (3600, "1:00"), (3 * 3600 + 7 * 60, "3:07"), (50 * 3600, "2D2H")],
+)
+def test_a_wait_is_to_the_minute_rounded_up(seconds, text):
+    assert cn001.countdown(seconds) == text
+
+
+def test_every_character_the_strip_can_say_fits_inside_the_margin():
+    widest = cn001.KEY_PIXELS - 2 * cn001.STRIP_MARGIN
+    for text in ("100%", "5H", "WEEK", "RESET"):
+        assert all(char in cn001.FONT for char in text)
+    for label in ("5H", "WEEK", "RESET"):
+        assert cn001.text_width(label, 2) <= widest
+    assert cn001.text_width("100%", 3) <= widest
+
+
+def lit(pixels: bytes) -> list[tuple[int, int]]:
+    n = cn001.KEY_PIXELS
+    return [(x, y) for y in range(n) for x in range(n) if at(pixels, x, y) != cn001.OFF]
+
+
+def test_nothing_is_drawn_where_the_strip_crops():
+    m, n = cn001.STRIP_MARGIN, cn001.KEY_PIXELS
+    for panel in cn001.strip_panels(reading(session=100.0, weekly_resets=50 * HOUR), WALL, stale=False).values():
+        assert all(m <= x < n - m and m <= y < n - m for x, y in lit(cn001.render_panel(panel)))
+
+
+def test_a_gauge_fills_upwards_from_the_bottom_and_is_drawn_upright():
+    pixels = cn001.render_panel(cn001.Panel("5H", "50%", cn001.GAUGE, 0.5))
+    left = cn001.GAUGE_LEFT + 1  # clear of the number
+    assert at(pixels, left, cn001.GAUGE_BOTTOM - 1) == cn001.GAUGE
+    assert at(pixels, left, cn001.GAUGE_TOP) == cn001.TRACK
+    # The label is above the gauge, so the panel's turn was undone.
+    assert all(y < cn001.GAUGE_TOP for x, y in lit(pixels) if at(pixels, x, y) == cn001.LABEL)
+
+
+def test_the_number_is_dark_on_the_fill_and_light_above_it():
+    pixels = cn001.render_panel(cn001.Panel("5H", "50%", cn001.GAUGE, 0.5))
+    colours = {at(pixels, x, y) for x, y in lit(pixels) if cn001.GAUGE_LEFT <= x < cn001.GAUGE_RIGHT}
+    assert cn001.BADGE in colours and cn001.GAUGE in colours
+
+
+def test_the_board_draws_the_strip_it_is_told_and_only_redraws_on_change():
+    hid, clock, wall = FakeHid(), Clock(), Clock(WALL)
+    board = cn001.CN001Device(hid, clock=clock, wall=wall)
+    board.send_frame(frame({}))
+    assert drawn(hid)[TOP] == b"", "dark until usage is known"
+    board.show_usage(reading(), stale=False)
+    board.animate(0.0)
+    assert all(drawn(hid)[key] for key in cn001.STRIP_KEYS)
+    before = len(hid.reports)
+    board.animate(0.5)
+    assert len(hid.reports) == before
+    wall.now += 60  # the countdown moves on
+    board.animate(1.0)
+    redrawn = [r[12] for r in hid.reports[before:] if r.startswith(b"CRT\0\0BAT")]
+    assert redrawn == [BOTTOM]
+
+
+def test_a_full_gauges_number_fits_inside_it():
+    gauge = cn001.GAUGE_RIGHT - cn001.GAUGE_LEFT
+    assert cn001.text_width("100%", 3) <= gauge
+    assert cn001.STRIP_MARGIN <= cn001.GAUGE_LEFT and cn001.GAUGE_RIGHT <= cn001.KEY_PIXELS - cn001.STRIP_MARGIN

@@ -2,6 +2,9 @@
 
 import herdrkeys.cli as cli
 from herdrkeys.config import Config
+from herdrkeys.usage import Limit, Usage, UsageError
+
+READING = Usage(Limit(11.0, None), None)
 
 
 class Ports:
@@ -12,8 +15,9 @@ class Ports:
         return [type("P", (), {"device": d, "interface": i})() for i, d in enumerate(self.devices)]
 
 
-def run_doctor(monkeypatch, capsys, *, daemon_pid, probe_raises=False, keybow=True, cn001=None):
+def run_doctor(monkeypatch, capsys, *, daemon_pid, probe_raises=False, keybow=True, cn001=None, usage=None):
     monkeypatch.setattr(cli, "running_daemon_pid", lambda: daemon_pid)
+    monkeypatch.setattr(cli.usage, "current", usage or (lambda: READING))
     monkeypatch.setattr(cli.discovery, "find_ports", Ports("/dev/console", "/dev/data") if keybow else Ports())
     # The real probe would find whatever is on this machine's USB bus.
     monkeypatch.setattr(cli, "_cn001_report", lambda pid: cn001 or (False, True, "not attached"))
@@ -133,3 +137,23 @@ def test_a_daemon_that_asks_to_restart_lets_go_of_the_boards_then_starts_over(mo
     except SystemExit:
         pass
     assert happened == ["close", ("exec", cli.sys.executable, ["/usr/bin/python3", "-m", "herdrkeys", "run"])]
+
+
+def test_usage_is_reported_beside_the_cn001_and_never_fails_doctor(monkeypatch, capsys):
+    code, out = run_doctor(monkeypatch, capsys, daemon_pid=None, keybow=False,
+                           cn001=(True, True, "serial X  ok"))
+    assert code == 0
+    assert "usage            ok  (session 11%, weekly none)" in out
+
+    def unknown():
+        raise UsageError("no Claude Code credential in the Keychain; sign in to Claude Code")
+
+    code, out = run_doctor(monkeypatch, capsys, daemon_pid=None, keybow=False,
+                           cn001=(True, True, "serial X  ok"), usage=unknown)
+    assert code == 0
+    assert "usage            UNKNOWN  (no Claude Code credential" in out
+
+
+def test_usage_is_not_reported_without_a_cn001(monkeypatch, capsys):
+    _code, out = run_doctor(monkeypatch, capsys, daemon_pid=None)
+    assert "usage" not in out
