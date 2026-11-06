@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 import threading
 import time
@@ -99,9 +100,17 @@ def _limit(value: object, name: str) -> Limit | None:
     # bool is an int, and True is not a percentage.
     if isinstance(percent, bool) or not isinstance(percent, (int, float)):
         raise UsageError(f"unexpected {name} utilization: {percent!r}")
+    # JSON's NaN and Infinity, and numbers too big for a float, all parse; none
+    # is a percentage, and drawing one would crash the strip (issue #27).
+    try:
+        percent = float(percent)
+    except OverflowError:
+        percent = math.inf
+    if not math.isfinite(percent):
+        raise UsageError(f"unexpected {name} utilization: not a finite number")
     resets = value.get("resets_at")
     if resets is None:
-        return Limit(float(percent), None)
+        return Limit(percent, None)
     if not isinstance(resets, str):
         raise UsageError(f"unexpected {name} resets_at: {resets!r}")
     try:
@@ -110,7 +119,7 @@ def _limit(value: object, name: str) -> Limit | None:
         raise UsageError(f"unexpected {name} resets_at: {resets!r}") from exc
     if moment.tzinfo is None:
         raise UsageError(f"{name} resets_at has no timezone: {resets!r}")
-    return Limit(float(percent), moment.timestamp())
+    return Limit(percent, moment.timestamp())
 
 
 def parse(payload: object) -> Usage:
