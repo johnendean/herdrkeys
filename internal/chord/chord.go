@@ -92,9 +92,10 @@ func (c Chord) Names() []string {
 // Default is the chord for this platform: Right Option on macOS, which is
 // what this project has always held, and Ctrl+Win on Windows, since Right Alt
 // is AltGr on many layouts and Flow rejects a bare Ctrl (ADR 0017).
-func Default() Chord { return defaultFor(runtime.GOOS) }
+func Default() Chord { return DefaultFor(runtime.GOOS) }
 
-func defaultFor(goos string) Chord {
+// DefaultFor is the default chord on the platform goos names.
+func DefaultFor(goos string) Chord {
 	if goos == "windows" {
 		return Chord{lookup("LEFT_CONTROL"), lookup("LEFT_GUI")}
 	}

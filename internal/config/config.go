@@ -61,6 +61,7 @@ func Defaults() Config {
 func Load(env Env) Config {
 	location := env.Resolve()
 	config := Defaults()
+	config.DictationChord = chord.DefaultFor(env.GOOS)
 	config.Location = location
 	config.SalvageDir = filepath.Join(filepath.Dir(location.Path), "salvage")
 	data, err := os.ReadFile(location.Path)

@@ -6,11 +6,11 @@ import (
 )
 
 func TestEachPlatformHasTheChordADR0017Names(t *testing.T) {
-	if got := defaultFor("darwin").Names(); !slices.Equal(got, []string{"RIGHT_ALT"}) {
+	if got := DefaultFor("darwin").Names(); !slices.Equal(got, []string{"RIGHT_ALT"}) {
 		t.Fatalf("macOS = %v: Right Option, as it has always been", got)
 	}
 	// Right Alt is AltGr on many layouts, and Flow rejects a bare Ctrl.
-	if got := defaultFor("windows").Names(); !slices.Equal(got, []string{"LEFT_CONTROL", "LEFT_GUI"}) {
+	if got := DefaultFor("windows").Names(); !slices.Equal(got, []string{"LEFT_CONTROL", "LEFT_GUI"}) {
 		t.Fatalf("Windows = %v", got)
 	}
 }
