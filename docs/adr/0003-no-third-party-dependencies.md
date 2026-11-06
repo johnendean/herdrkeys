@@ -4,7 +4,7 @@ Date: 2026-09-04
 
 ## Status
 
-Accepted
+Superseded by ADR 0020
 
 Supersedes the venv-and-pyserial arrangement introduced in ADR 0001's wake.
 

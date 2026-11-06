@@ -4,9 +4,9 @@ Date: 2026-10-27
 
 ## Status
 
-Accepted
+Superseded by ADR 0020
 
-Extends ADR 0003 to a board it did not anticipate.
+Extended ADR 0003 to a board it did not anticipate.
 
 ## Context
 

@@ -9,6 +9,16 @@ Accepted
 Replaces ADR 0014's "Dictation stays on the Keybow". Amends ADR 0006: the
 microphone's state moves to the host, though the Keybow still types for itself.
 
+Amended by ADR 0020's port (2026-11-06). The chord is no longer always Right
+Option. The host chooses the **dictation chord**, with a default per platform
+(Right Option on macOS, Ctrl+Win on Windows, since Right Alt is AltGr on many
+layouts) and a `config.toml` override. `doctor` checks the chord against the
+push-to-talk binding in Flow's own config. The chord is sent to the Keybow in the handshake
+(protocol 3). On Windows the daemon types with `SendInput`, which needs no
+permission, so the Accessibility request and the restart-in-place below apply
+to macOS only. Without launchd, that restart must keep the process ID on its
+own.
+
 ## Context
 
 ADR 0014 left the CN001's microphone and return keys dark, because the CN001
