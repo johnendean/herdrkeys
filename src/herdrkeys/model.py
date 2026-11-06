@@ -20,7 +20,7 @@ GIT_SLOT = 14
 FEATURE_SLOTS = (12, 13, 14, 15)
 AGENT_SLOTS = tuple(range(12))  # 0..11, and contiguous: slot n is the nth agent
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 
 class AgentState(str, Enum):

@@ -23,9 +23,6 @@ const (
 // FeatureSlots are the slots that never hold an agent.
 var FeatureSlots = [...]int{MicSlot, ReturnSlot, GitSlot, FnSlot}
 
-// ProtocolVersion is the Keybow wire protocol this host speaks.
-const ProtocolVersion = 2
-
 // AgentState is Herdr's agent lifecycle state. A closed set: see CONTEXT.md.
 type AgentState string
 

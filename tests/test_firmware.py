@@ -51,13 +51,15 @@ class FakeKeyboard:
         self.held = []
         self.pressed = []  # every key that ever went down, in order
 
-    def press(self, code):
-        self.held.append(code)
-        self.pressed.append(code)
+    def press(self, *codes):
+        for code in codes:
+            self.held.append(code)
+            self.pressed.append(code)
 
-    def release(self, code):
-        if code in self.held:
-            self.held.remove(code)
+    def release(self, *codes):
+        for code in codes:
+            if code in self.held:
+                self.held.remove(code)
 
 
 def _stub_modules(*, hid: bool):
@@ -73,7 +75,10 @@ def _stub_modules(*, hid: bool):
         modules["adafruit_hid"] = types.SimpleNamespace()
         modules["adafruit_hid.keyboard"] = types.SimpleNamespace(Keyboard=FakeKeyboard)
         modules["adafruit_hid.keycode"] = types.SimpleNamespace(
-            Keycode=types.SimpleNamespace(RIGHT_ALT="RIGHT_ALT", ENTER="ENTER")
+            Keycode=types.SimpleNamespace(
+                ENTER="ENTER", **{name: name for name in ("LEFT_CONTROL", "RIGHT_CONTROL", "LEFT_SHIFT",
+                    "RIGHT_SHIFT", "LEFT_ALT", "RIGHT_ALT", "LEFT_GUI", "RIGHT_GUI", "F13", "F14", "F15", "A")}
+            )
         )
     return modules
 
@@ -174,6 +179,34 @@ def test_it_holds_the_hotkey_while_the_host_says_to(firmware):
     assert held(firmware) == []
 
 
+def test_it_holds_the_chord_the_host_names(firmware):
+    # Protocol 3: the host chooses the chord and names it on every hold, so
+    # the board keeps no setting of its own (ADR 0017, as amended).
+    firmware["handle"]({"v": 3, "t": "hold", "on": True, "keys": ["LEFT_CONTROL", "LEFT_GUI"]})
+    assert held(firmware) == ["LEFT_CONTROL", "LEFT_GUI"]
+
+    firmware["handle"]({"v": 3, "t": "hold", "on": False})
+    assert held(firmware) == [], "it lets go of exactly what it held"
+
+
+def test_a_chord_of_ordinary_keys_is_not_held(firmware):
+    # It would type into whatever has focus for as long as dictation runs.
+    firmware["handle"]({"v": 3, "t": "hold", "on": True, "keys": ["A", "LEFT_GUI", "NOT_A_KEY", 5]})
+    assert held(firmware) == ["LEFT_GUI"]
+
+
+def test_a_hold_that_names_nothing_it_knows_holds_right_option(firmware):
+    # What every host before protocol 3 meant.
+    firmware["handle"]({"v": 3, "t": "hold", "on": True, "keys": ["A"]})
+    assert held(firmware) == ["RIGHT_ALT"]
+
+
+def test_the_chord_is_let_go_when_the_host_goes_quiet(firmware):
+    firmware["handle"]({"v": 3, "t": "hold", "on": True, "keys": ["LEFT_CONTROL", "LEFT_GUI"]})
+    firmware["paint"](firmware["HOST_TIMEOUT"] + 1.0)
+    assert held(firmware) == [], "a dead daemon must not leave a chord down"
+
+
 def test_it_types_return_when_the_host_says_to(firmware):
     firmware["handle"]({"v": 2, "t": "return"})
     assert firmware["keyboard"].pressed == ["ENTER"]
@@ -240,7 +273,7 @@ def test_a_board_with_no_hid_library_still_lights_up(monkeypatch):
     fw["handle"]({"v": 2, "t": "hold", "on": True})
     fw["handle"]({"v": 2, "t": "return"})
     fw["paint"](0.2)
-    assert not fw["holding"], "nothing was ever held, so nothing is stuck"
+    assert not fw["held"], "nothing was ever held, so nothing is stuck"
 
 
 # -- the return key -------------------------------------------------------
