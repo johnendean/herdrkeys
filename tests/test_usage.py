@@ -58,6 +58,17 @@ def test_any_other_shape_is_usage_unknown(payload):
         usage.parse(payload)
 
 
+# json.load reads all of these without complaint, and a percentage that is not
+# a finite number would crash the strip's drawing on the daemon's own thread.
+@pytest.mark.parametrize("utilization", ["NaN", "Infinity", "-Infinity", "1e309", "1" + "0" * 400])
+def test_a_percentage_that_is_not_a_finite_number_is_usage_unknown(utilization):
+    payload = json.loads(
+        '{"five_hour": {"utilization": %s, "resets_at": null}, "seven_day": null}' % utilization
+    )
+    with pytest.raises(UsageError):
+        usage.parse(payload)
+
+
 # -- reading it at a moment ---------------------------------------------------
 
 
