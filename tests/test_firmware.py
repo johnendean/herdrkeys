@@ -18,19 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from herdrkeys.model import (
-    GIT_LOOKING,
-    GIT_NO_PAGE,
-    GIT_PAGE,
-    GIT_SLOT,
-    MIC,
-    MIC_LATCHED,
-    MIC_OPEN,
-    MIC_SLOT,
-    PROTOCOL_VERSION,
-    RETURN,
-    RETURN_SLOT,
-)
+# What the host sends, as internal/model/model.go and internal/keybow/protocol.go
+# have it. The firmware is held to those by TestTheFirmwareSpeaksTheHostsCodes in
+# internal/model, so these only have to agree with the firmware tested here.
+PROTOCOL_VERSION = 3
+MIC_SLOT, RETURN_SLOT, GIT_SLOT = 12, 13, 14
+MIC, MIC_OPEN, MIC_LATCHED = "m", "o", "l"
+RETURN = "e"
+GIT_PAGE, GIT_NO_PAGE, GIT_LOOKING = "r", "n", "g"
 
 SOURCE = (Path(__file__).parent.parent / "device" / "code.py").read_text()
 

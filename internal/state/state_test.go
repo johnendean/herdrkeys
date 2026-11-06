@@ -14,9 +14,9 @@ import (
 
 // fixture is 99 events captured verbatim from a live Herdr 0.8.2 session by
 // subscribing over the socket. It is the only fixture here that nobody
-// invented, so it is the one that catches wrong assumptions. Shared with the
-// Python suite until the cutover in ADR 0020.
-const fixture = "../../tests/fixtures/session-events.jsonl"
+// invented, so it is the one that catches wrong assumptions.
+
+const fixture = "testdata/session-events.jsonl"
 
 // rawEvents is the recording as plain JSON, for the assertions about the
 // recording itself rather than about the fold.

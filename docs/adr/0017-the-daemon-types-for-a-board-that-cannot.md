@@ -13,8 +13,9 @@ Amended by ADR 0020's port (2026-11-06). The chord is no longer always Right
 Option. The host chooses the **dictation chord**, with a default per platform
 (Right Option on macOS, Ctrl+Win on Windows, since Right Alt is AltGr on many
 layouts) and a `config.toml` override. `doctor` checks the chord against the
-push-to-talk binding in Flow's own config. The chord is sent to the Keybow in the handshake
-(protocol 3). On Windows the daemon types with `SendInput`, which needs no
+push-to-talk binding in Flow's own config. The chord is named to the Keybow on every hold
+(protocol 3), so the board keeps no setting of its own, and a hold that names
+nothing it knows holds Right Option, as every older host meant. On Windows the daemon types with `SendInput`, which needs no
 permission, so the Accessibility request and the restart-in-place below apply
 to macOS only. Without launchd, that restart must keep the process ID on its
 own.
