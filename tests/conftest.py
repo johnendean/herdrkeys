@@ -42,10 +42,26 @@ def no_real_usage(monkeypatch):
     The daemon polls usage while a board with a strip is attached (ADR 0019),
     which reads Claude Code's real credential -- possibly raising macOS's
     Keychain dialog -- and makes a real request.
+
+    The real poller asks on a worker thread and catches whatever the asking
+    raises, so raising here would only be logged and the test would pass
+    (issue #29). Instead every attempt is recorded and answered as "usage
+    unknown", and the test fails at teardown, on its own thread.
     """
+    import threading
+
     from herdrkeys import usage
 
+    attempts = []
+
     def refuse():
-        raise AssertionError("a test tried to ask Anthropic for usage")
+        attempts.append(threading.current_thread().name)
+        raise usage.UsageError("a test tried to ask Anthropic for usage")
 
     monkeypatch.setattr(usage, "current", refuse)
+    yield
+    # A real poller's worker may still be starting; give it the chance to be seen.
+    for thread in threading.enumerate():
+        if thread.name == "usage":
+            thread.join(timeout=1.0)
+    assert not attempts, "a test tried to ask Anthropic for usage: give its Poller an `ask`"
