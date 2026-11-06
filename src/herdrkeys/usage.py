@@ -217,6 +217,7 @@ class Poller:
         self._interval = POLL_SECONDS
         self._next_ask = 0.0
         self._asking: Future | None = None
+        self._asked_at = 0.0  # when the request out now, or the last one, started
 
     def stale(self, now: float) -> bool:
         return self.read_at is not None and now - self.read_at > STALE_SECONDS
@@ -227,6 +228,7 @@ class Poller:
             return
         asking: Future = Future()
         self._asking = asking
+        self._asked_at = now
         self._next_ask = now + self._interval
 
         def work() -> None:
@@ -251,7 +253,11 @@ class Poller:
         error = asking.exception()
         if error is None:
             self.reading, self.read_at = asking.result(), now
+            # Back to once a minute from when this request started -- not at
+            # the backed-off deadline set when it did, which after a run of
+            # 429s left a good reading to go stale before the next (#28).
             self._interval = POLL_SECONDS
+            self._next_ask = self._asked_at + POLL_SECONDS
             if self.last_error is not None:
                 log.info("usage: known again")
             self.last_error = None
