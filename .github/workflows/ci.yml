@@ -76,6 +76,27 @@ jobs:
           print(f"\n{len(modules)} modules, no third-party imports")
           PY
 
+  # The Go port (ADR 0020), alongside the Python until the cutover. Both
+  # platforms the manifest will claim: the transport is a Unix socket on one
+  # and a named pipe on the other, and each is tested against a real one.
+  go:
+    name: go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # go.mod pins the exact toolchain, the same one release builds will need.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go vet ./...
+      - run: go test ./...
+
   # The one check main is protected on. Requiring the matrix jobs directly
   # would pin the protection rule to their generated names, so adding a python
   # version or dropping a runner would silently stop being required. This gate
@@ -83,12 +104,14 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: [test, no-dependencies]
+    needs: [test, no-dependencies, go]
     if: always()
     steps:
       - name: Check that everything passed
         run: |
           echo "tests:            ${{ needs.test.result }}"
           echo "no-dependencies:  ${{ needs.no-dependencies.result }}"
+          echo "go:               ${{ needs.go.result }}"
           [ "${{ needs.test.result }}" = "success" ] \
-            && [ "${{ needs.no-dependencies.result }}" = "success" ]
+            && [ "${{ needs.no-dependencies.result }}" = "success" ] \
+            && [ "${{ needs.go.result }}" = "success" ]
